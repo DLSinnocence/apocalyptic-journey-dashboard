@@ -422,7 +422,7 @@ function updateOverview() {
           <div class="activity-item">
             <div class="activity-time">${time}</div>
             <div class="activity-desc">玩家 <strong>${
-              playerId
+              playerId.slice(0, 6) + "......" // 截断ID显示
             }</strong> 完成了一次游戏</div>
           </div>
         `;
@@ -509,7 +509,7 @@ function updatePlayerList() {
           const lastSeen = new Date(stats.lastSeen).toLocaleString("zh-CN");
           html += `
             <tr>
-              <td><strong>${playerId}</strong></td>
+              <td><strong>${playerId.slice(0, 6) + "......"}</strong></td>
               <td>${stats.count}</td>
               <td>${lastSeen}</td>
             </tr>
@@ -2152,7 +2152,7 @@ function exportData() {
         const dataType = "游戏选择";
         const details = JSON.stringify(parsedData);
 
-        csvData.push([time, playerId, dataType, details]);
+        csvData.push([time, playerId.slice(0, 6) + "......" , dataType, details]);
       } catch (e) {
         console.warn("导出数据解析失败:", e);
       }
