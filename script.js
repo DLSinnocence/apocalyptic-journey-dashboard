@@ -1,6 +1,6 @@
 const TABLE_NAME = "save_selection";
 const BASE_URL = "https://swtxytbwwwaacdvubkgy.supabase.co";
-const API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN3dHh5dGJ3d3dhYWNkdnVia2d5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAwODU1MjUsImV4cCI6MjA2NTY2MTUyNX0.ja59qjtcnOb2KEOVM-KeWDZ1KfQr2J1eld2VX8mvSWc";
+const API_KEY ="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN3dHh5dGJ3d3dhYWNkdnVia2d5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAwODU1MjUsImV4cCI6MjA2NTY2MTUyNX0.ja59qjtcnOb2KEOVM-KeWDZ1KfQr2J1eld2VX8mvSWc";
 
 // 全局变量
 let allData = [];
@@ -8,48 +8,121 @@ let allData = [];
 // DOM 元素
 let refreshBtn, loadingDiv, errorDiv;
 
-
 // 在script.js中使用配置
-function initializeApp() {
-  // 检查配置是否完整
-  if (!window.AppConfig.isConfigured()) {
-    console.error('应用配置不完整，请检查API配置');
-    showError('配置错误：缺少必要的API配置');
-    return;
-  }
-  
-  console.log('✅ 应用配置已加载');
-  // 继续初始化应用...
+function initializeApp() {}
+let currentUser = null;
+
+// 初始化认证状态监听器
+function initAuthStateListener() {
+  supabase.auth.onAuthStateChange((event, session) => {
+    if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+      // 用户已登录
+      currentUser = session.user;
+      console.log("用户已登录:", currentUser.email);
+      showAppContent();
+    } else if (event === "SIGNED_OUT") {
+      // 用户已登出
+      currentUser = null;
+      console.log("用户已登出");
+      showLoginForm();
+    }
+  });
 }
 
-// 页面加载完成后初始化
-document.addEventListener('DOMContentLoaded', initializeApp);
+// 设置登录表单事件
+function setupAuthForms() {
+  const loginForm = document.getElementById("login-form");
+  const logoutBtn = document.getElementById("logoutBtn");
+
+  // 登录表单提交
+  if (loginForm) {
+    loginForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = document.getElementById("email").value;
+      const password = document.getElementById("password").value;
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) {
+        showLoginError("登录失败: " + error.message);
+      }
+    });
+  }
+
+  // 登出按钮
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", async () => {
+      const { error } = await supabase.auth.signOut();
+      if (error) console.error("登出失败:", error);
+    });
+  }
+}
+
+// 显示登录错误
+function showLoginError(message) {
+  const errorEl = document.getElementById("login-error");
+  if (errorEl) {
+    errorEl.textContent = message;
+    errorEl.classList.remove("hidden");
+  }
+}
+
+// 显示应用内容
+function showAppContent() {
+  document.getElementById("login-container").classList.add("hidden");
+  document.getElementById("app-container").classList.remove("hidden");
+
+  // 初始化应用的其他部分
+  refreshBtn = document.getElementById("refreshBtn");
+  loadingDiv = document.getElementById("loading");
+  errorDiv = document.getElementById("error");
+
+  initTabs();
+  loadData();
+}
+
+// 显示登录表单
+function showLoginForm() {
+  document.getElementById("login-container").classList.remove("hidden");
+  document.getElementById("app-container").classList.add("hidden");
+
+  // 清空错误信息
+  const errorEl = document.getElementById("login-error");
+  if (errorEl) {
+    errorEl.classList.add("hidden");
+  }
+}
 
 // 初始化 Supabase 客户端
 const supabase = window.supabase.createClient(BASE_URL, API_KEY);
 
+// 页面加载完成后初始化
+document.addEventListener("DOMContentLoaded", initializeApp);
+
 // 初始化应用
 document.addEventListener("DOMContentLoaded", function () {
   console.log("DOM 加载完成，开始初始化...");
-  
+
   // 获取DOM元素
   refreshBtn = document.getElementById("refreshBtn");
   loadingDiv = document.getElementById("loading");
   errorDiv = document.getElementById("error");
-  
-  console.log("DOM元素检查:");
-  console.log("- refreshBtn:", refreshBtn);
-  console.log("- loadingDiv:", loadingDiv);
-  console.log("- errorDiv:", errorDiv);
-  
+  // 初始化Supabase认证状态监听器
+  initAuthStateListener();
+  // 设置登录表单事件
+  setupAuthForms();
+
   // 设置事件监听器
   if (refreshBtn) {
-    refreshBtn.addEventListener("click", loadData);
+    refreshBtn.addEventListener("click", () => loadData(true));
   }
-  
+
   // 初始化标签页
   initTabs();
-  
+
   // 加载数据
   loadData();
 });
@@ -58,18 +131,23 @@ document.addEventListener("DOMContentLoaded", function () {
 function initTabs() {
   const tabBtns = document.querySelectorAll(".tab-btn");
   const tabPanes = document.querySelectorAll(".tab-pane");
-  
-  console.log("初始化标签页 - 按钮数量:", tabBtns.length, "面板数量:", tabPanes.length);
-  
+
+  console.log(
+    "初始化标签页 - 按钮数量:",
+    tabBtns.length,
+    "面板数量:",
+    tabPanes.length
+  );
+
   tabBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
       const targetTab = btn.getAttribute("data-tab");
       console.log("切换到标签页:", targetTab);
-      
+
       // 移除所有活动状态
       tabBtns.forEach((b) => b.classList.remove("active"));
       tabPanes.forEach((p) => p.classList.remove("active"));
-      
+
       // 添加当前活动状态
       btn.classList.add("active");
       const targetPane = document.getElementById(targetTab);
@@ -81,48 +159,57 @@ function initTabs() {
 }
 
 // 加载数据
-async function loadData() {
+async function loadData(forceRefresh = false) {
   console.log("=== 开始加载数据 ===");
-  
+
   showLoading(true);
   hideError();
-  
+
   if (refreshBtn) {
     refreshBtn.disabled = true;
     refreshBtn.textContent = "🔄 加载中...";
   }
-  
+
+  const CACHE_KEY = "dashboard_data_cache";
+  const CACHE_TTL = 5 * 60 * 1000; // 5分钟有效
+
   try {
-    console.log("连接到 Supabase...");
-    console.log("表名:", TABLE_NAME);
-    
-    // 获取数据
+    if (!forceRefresh) {
+      const cached = localStorage.getItem(CACHE_KEY);
+      if (cached) {
+        const decrypted = await decryptData(
+          JSON.parse(cached),
+          ENC_KEY_PASSPHRASE
+        );
+        if (Date.now() - decrypted.timestamp < CACHE_TTL) {
+          allData = decrypted.data;
+          updateUI();
+          return;
+        }
+      }
+    }
+
+    // 请求 Supabase 数据
     const { data, error } = await supabase
       .from(TABLE_NAME)
       .select("*")
       .order("create_at", { ascending: false })
-      .limit(1000); // 限制数量避免加载过多数据
-    
-    if (error) {
-      console.error("Supabase 错误:", error);
-      throw new Error(`数据获取失败: ${error.message}`);
-    }
-    
-    console.log("获取到的原始数据:", data);
-    console.log("数据条数:", data?.length);
-    
-    if (!data || data.length === 0) {
-      throw new Error("没有获取到任何数据");
-    }
-    
+      .limit(1000);
+
+    if (error) throw new Error(`数据获取失败: ${error.message}`);
+    if (!data || data.length === 0) throw new Error("没有获取到任何数据");
+
     allData = data;
-    console.log("数据保存到 allData，长度:", allData.length);
-    
-    // 更新UI
+    console.log("✅ 数据加载成功，保存到缓存");
+
+    // 保存缓存
+    const encrypted = await encryptData(
+      { timestamp: Date.now(), data },
+      ENC_KEY_PASSPHRASE
+    );
+    localStorage.setItem(CACHE_KEY, JSON.stringify(encrypted));
+
     updateUI();
-    
-    console.log("✅ 数据加载完成");
-    
   } catch (error) {
     console.error("❌ 数据加载失败:", error);
     showError(error.message);
@@ -138,25 +225,24 @@ async function loadData() {
 // 更新UI
 function updateUI() {
   console.log("=== 开始更新UI ===");
-  
+
   try {
     // 显示主要内容
     const mainContent = document.querySelector(".main-content");
     if (mainContent) {
       mainContent.style.display = "block";
     }
-    
+
     // 更新统计信息
     updateStats();
-    
+
     // 更新各个标签页
     updateOverview();
     updatePlayerList();
     updateCardAnalysis();
     updateTimeAnalysis();
-    
+
     console.log("✅ UI更新完成");
-    
   } catch (error) {
     console.error("❌ UI更新失败:", error);
   }
@@ -165,16 +251,16 @@ function updateUI() {
 // 更新统计信息
 function updateStats() {
   console.log("=== 更新统计信息 ===");
-  
+
   if (!allData || allData.length === 0) {
     console.log("没有数据");
     return;
   }
-  
+
   try {
     const totalRecords = allData.length;
     const uniquePlayers = new Set();
-    
+
     // 统计唯一玩家
     allData.forEach((record) => {
       try {
@@ -184,7 +270,7 @@ function updateStats() {
         } else {
           parsedData = record.data;
         }
-        
+
         if (parsedData && parsedData.PlayerId) {
           uniquePlayers.add(parsedData.PlayerId);
         }
@@ -192,7 +278,7 @@ function updateStats() {
         console.warn("数据解析失败:", e);
       }
     });
-    
+
     // 获取最后更新时间
     let lastUpdate = "无数据";
     if (allData.length > 0 && allData[0].create_at) {
@@ -202,27 +288,26 @@ function updateStats() {
         lastUpdate = "时间格式错误";
       }
     }
-    
+
     // 更新DOM
     const totalElement = document.getElementById("totalRecords");
     const playersElement = document.getElementById("activePlayers");
     const updateElement = document.getElementById("lastUpdate");
-    
+
     if (totalElement) {
       totalElement.textContent = totalRecords.toLocaleString();
       console.log("✅ 总记录数已更新:", totalRecords);
     }
-    
+
     if (playersElement) {
       playersElement.textContent = uniquePlayers.size.toLocaleString();
       console.log("✅ 活跃玩家数已更新:", uniquePlayers.size);
     }
-    
+
     if (updateElement) {
       updateElement.textContent = lastUpdate;
       console.log("✅ 最后更新时间已更新:", lastUpdate);
     }
-    
   } catch (error) {
     console.error("统计信息更新失败:", error);
   }
@@ -231,27 +316,27 @@ function updateStats() {
 // 更新概览
 function updateOverview() {
   console.log("=== 更新概览 ===");
-  
+
   const overviewContent = document.getElementById("overview-content");
   if (!overviewContent) {
     console.error("找不到 overview-content 元素");
     return;
   }
-  
+
   if (!allData || allData.length === 0) {
     overviewContent.innerHTML = '<div class="no-data">暂无数据</div>';
     return;
   }
-  
+
   try {
     let html = '<div class="overview-container">';
-    
+
     // 基本统计
     const uniquePlayers = new Set();
     let totalSelections = 0;
     const itemCounts = {};
-    
-    allData.forEach(record => {
+
+    allData.forEach((record) => {
       try {
         let parsedData;
         if (typeof record.data === "string") {
@@ -259,16 +344,16 @@ function updateOverview() {
         } else {
           parsedData = record.data;
         }
-        
+
         if (parsedData) {
           if (parsedData.PlayerId) {
             uniquePlayers.add(parsedData.PlayerId);
           }
-          
+
           // 统计各种选择
-          ['Cards', 'Relics', 'Blessings'].forEach(category => {
+          ["Cards", "Relics", "Blessings"].forEach((category) => {
             if (parsedData[category] && parsedData[category].Select) {
-              parsedData[category].Select.forEach(item => {
+              parsedData[category].Select.forEach((item) => {
                 const itemId = item.Id || item;
                 itemCounts[itemId] = (itemCounts[itemId] || 0) + 1;
                 totalSelections++;
@@ -280,12 +365,12 @@ function updateOverview() {
         console.warn("数据解析失败:", e);
       }
     });
-    
+
     // 热门物品
     const topItems = Object.entries(itemCounts)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 10);
-    
+
     html += `
       <div class="overview-cards">
         <div class="info-card">
@@ -294,11 +379,13 @@ function updateOverview() {
             <li>总记录数: <strong>${allData.length}</strong></li>
             <li>活跃玩家: <strong>${uniquePlayers.size}</strong></li>
             <li>总选择次数: <strong>${totalSelections}</strong></li>
-            <li>不同物品种类: <strong>${Object.keys(itemCounts).length}</strong></li>
+            <li>不同物品种类: <strong>${
+              Object.keys(itemCounts).length
+            }</strong></li>
           </ul>
         </div>
     `;
-    
+
     if (topItems.length > 0) {
       html += `
         <div class="info-card">
@@ -309,18 +396,18 @@ function updateOverview() {
         const itemName = formatItemName(item);
         html += `<li>${itemName}: <strong>${count}次</strong></li>`;
       });
-      html += '</ul></div>';
+      html += "</ul></div>";
     }
-    
-    html += '</div>'; // 结束 overview-cards
-    
+
+    html += "</div>"; // 结束 overview-cards
+
     // 最近活动
     html += '<div class="recent-activity">';
-    html += '<h3>📝 最近活动</h3>';
+    html += "<h3>📝 最近活动</h3>";
     html += '<div class="activity-list">';
-    
+
     const recentRecords = allData.slice(0, 10);
-    recentRecords.forEach(record => {
+    recentRecords.forEach((record) => {
       try {
         const time = new Date(record.create_at).toLocaleString("zh-CN");
         let parsedData;
@@ -329,25 +416,26 @@ function updateOverview() {
         } else {
           parsedData = record.data;
         }
-        
+
         const playerId = parsedData?.PlayerId || "未知玩家";
         html += `
           <div class="activity-item">
             <div class="activity-time">${time}</div>
-            <div class="activity-desc">玩家 <strong>${playerId.slice(0, 10) + "..."}</strong> 完成了一次游戏</div>
+            <div class="activity-desc">玩家 <strong>${
+              playerId
+            }</strong> 完成了一次游戏</div>
           </div>
         `;
       } catch (e) {
         console.warn("活动记录解析失败:", e);
       }
     });
-    
-    html += '</div></div>'; // 结束 recent-activity
-    html += '</div>'; // 结束 overview-container
-    
+
+    html += "</div></div>"; // 结束 recent-activity
+    html += "</div>"; // 结束 overview-container
+
     overviewContent.innerHTML = html;
     console.log("✅ 概览更新完成");
-    
   } catch (error) {
     console.error("概览更新失败:", error);
     overviewContent.innerHTML = '<div class="error">概览数据加载失败</div>';
@@ -357,22 +445,22 @@ function updateOverview() {
 // 更新玩家列表
 function updatePlayerList() {
   console.log("=== 更新玩家列表 ===");
-  
+
   const playerContent = document.getElementById("players-content");
   if (!playerContent) {
     console.error("找不到 players-content 元素");
     return;
   }
-  
+
   if (!allData || allData.length === 0) {
     playerContent.innerHTML = '<div class="no-data">暂无玩家数据</div>';
     return;
   }
-  
+
   try {
     const playerStats = {};
-    
-    allData.forEach(record => {
+
+    allData.forEach((record) => {
       try {
         let parsedData;
         if (typeof record.data === "string") {
@@ -380,18 +468,21 @@ function updatePlayerList() {
         } else {
           parsedData = record.data;
         }
-        
+
         if (parsedData && parsedData.PlayerId) {
           const playerId = parsedData.PlayerId;
           if (!playerStats[playerId]) {
             playerStats[playerId] = {
               count: 0,
-              lastSeen: record.create_at
+              lastSeen: record.create_at,
             };
           }
           playerStats[playerId].count++;
-          
-          if (new Date(record.create_at) > new Date(playerStats[playerId].lastSeen)) {
+
+          if (
+            new Date(record.create_at) >
+            new Date(playerStats[playerId].lastSeen)
+          ) {
             playerStats[playerId].lastSeen = record.create_at;
           }
         }
@@ -399,41 +490,41 @@ function updatePlayerList() {
         console.warn("玩家数据解析失败:", e);
       }
     });
-    
+
     let html = '<div class="player-list-container">';
-    html += '<h3>👥 玩家统计</h3>';
-    
+    html += "<h3>👥 玩家统计</h3>";
+
     if (Object.keys(playerStats).length === 0) {
       html += '<div class="no-data">没有找到有效的玩家数据</div>';
     } else {
       html += '<div class="table-container">';
       html += '<table class="player-table">';
-      html += '<thead><tr><th>玩家ID</th><th>游戏次数</th><th>最后活动</th></tr></thead>';
-      html += '<tbody>';
-      
+      html +=
+        "<thead><tr><th>玩家ID</th><th>游戏次数</th><th>最后活动</th></tr></thead>";
+      html += "<tbody>";
+
       Object.entries(playerStats)
         .sort((a, b) => b[1].count - a[1].count)
         .forEach(([playerId, stats]) => {
           const lastSeen = new Date(stats.lastSeen).toLocaleString("zh-CN");
           html += `
             <tr>
-              <td><strong>${playerId.slice(0,10) + "..."}</strong></td>
+              <td><strong>${playerId}</strong></td>
               <td>${stats.count}</td>
               <td>${lastSeen}</td>
             </tr>
           `;
         });
-      
-      html += '</tbody></table>';
-      html += '</div>';
+
+      html += "</tbody></table>";
+      html += "</div>";
     }
-    
-    html += '</div>';
+
+    html += "</div>";
     playerContent.innerHTML = html;
     console.log("✅ 玩家列表更新完成");
-    
   } catch (error) {
-        console.error("玩家列表更新失败:", error);
+    console.error("玩家列表更新失败:", error);
     playerContent.innerHTML = '<div class="error">玩家数据加载失败</div>';
   }
 }
@@ -441,26 +532,26 @@ function updatePlayerList() {
 // 更新卡牌分析函数 - 支持多种物品类型
 function updateCardAnalysis() {
   console.log("=== 更新物品分析 ===");
-  
+
   const cardContent = document.getElementById("cards-content");
   if (!cardContent) {
     console.error("找不到 cards-content 元素");
     return;
   }
-  
+
   if (!allData || allData.length === 0) {
     cardContent.innerHTML = '<div class="no-data">暂无数据</div>';
     return;
   }
-  
+
   try {
     // 统计所有物品类型的数据
     const itemStats = {
       cards: { show: {}, select: {}, buy: {} },
       relics: { show: {}, select: {}, buy: {} },
-      blessings: { show: {}, select: {}, buy: {} }
+      blessings: { show: {}, select: {}, buy: {} },
     };
-    
+
     // 处理数据
     allData.forEach((record, index) => {
       try {
@@ -470,42 +561,44 @@ function updateCardAnalysis() {
         } else {
           parsedData = record.data;
         }
-        
+
         if (parsedData) {
           // 处理卡牌数据
           if (parsedData.Cards) {
-            processItemData(parsedData.Cards, itemStats.cards, 'Cards');
+            processItemData(parsedData.Cards, itemStats.cards, "Cards");
           }
-          
+
           // 处理遗物数据
           if (parsedData.Relics) {
-            processItemData(parsedData.Relics, itemStats.relics, 'Relics');
+            processItemData(parsedData.Relics, itemStats.relics, "Relics");
           }
-          
+
           // 处理祝福数据
           if (parsedData.Blessings) {
-            processItemData(parsedData.Blessings, itemStats.blessings, 'Blessings');
+            processItemData(
+              parsedData.Blessings,
+              itemStats.blessings,
+              "Blessings"
+            );
           }
         }
       } catch (e) {
         console.warn(`记录 ${index} 数据解析失败:`, e);
       }
     });
-    
-    console.log("物品统计结果:", itemStats);
-    
+
     // 生成完整的分析界面
     const html = generateAnalysisHTML(itemStats);
     cardContent.innerHTML = html;
-    
+
     // 绑定筛选事件
     bindAnalysisEvents(itemStats);
-    
+
     console.log("✅ 物品分析更新完成");
-    
   } catch (error) {
     console.error("物品分析更新失败:", error);
-    cardContent.innerHTML = '<div class="error">数据加载失败: ' + error.message + '</div>';
+    cardContent.innerHTML =
+      '<div class="error">数据加载失败: ' + error.message + "</div>";
   }
 }
 
@@ -513,44 +606,48 @@ function updateCardAnalysis() {
 function processItemData(itemData, stats, itemType) {
   if (Array.isArray(itemData)) {
     // 如果是数组格式，直接统计为选择
-    itemData.forEach(item => {
-      const itemId = typeof item === 'object' ? (item.Id || item.id || item) : item;
+    itemData.forEach((item) => {
+      const itemId =
+        typeof item === "object" ? item.Id || item.id || item : item;
       if (itemId) {
         stats.select[itemId] = (stats.select[itemId] || 0) + 1;
       }
     });
-  } else if (typeof itemData === 'object') {
+  } else if (typeof itemData === "object") {
     // 如果是对象格式，分别处理不同类型
-    
+
     // 处理展示数据
-    ['RewardShow', 'ShopShow', 'Show'].forEach(showType => {
+    ["RewardShow", "ShopShow", "Show"].forEach((showType) => {
       if (itemData[showType] && Array.isArray(itemData[showType])) {
-        itemData[showType].forEach(item => {
-          const itemId = typeof item === 'object' ? (item.Id || item.id || item) : item;
+        itemData[showType].forEach((item) => {
+          const itemId =
+            typeof item === "object" ? item.Id || item.id || item : item;
           if (itemId) {
             stats.show[itemId] = (stats.show[itemId] || 0) + 1;
           }
         });
       }
     });
-    
+
     // 处理选择数据
-    ['Select', 'Selected', 'Picked'].forEach(selectType => {
+    ["Select", "Selected", "Picked"].forEach((selectType) => {
       if (itemData[selectType] && Array.isArray(itemData[selectType])) {
-        itemData[selectType].forEach(item => {
-          const itemId = typeof item === 'object' ? (item.Id || item.id || item) : item;
+        itemData[selectType].forEach((item) => {
+          const itemId =
+            typeof item === "object" ? item.Id || item.id || item : item;
           if (itemId) {
             stats.select[itemId] = (stats.select[itemId] || 0) + 1;
           }
         });
       }
     });
-    
+
     // 处理购买数据
-    ['Buy', 'Bought', 'Purchased'].forEach(buyType => {
+    ["Buy", "Bought", "Purchased"].forEach((buyType) => {
       if (itemData[buyType] && Array.isArray(itemData[buyType])) {
-        itemData[buyType].forEach(item => {
-          const itemId = typeof item === 'object' ? (item.Id || item.id || item) : item;
+        itemData[buyType].forEach((item) => {
+          const itemId =
+            typeof item === "object" ? item.Id || item.id || item : item;
           if (itemId) {
             stats.buy[itemId] = (stats.buy[itemId] || 0) + 1;
           }
@@ -641,42 +738,45 @@ function generateAnalysisHTML(itemStats) {
       </div>
     </div>
   `;
-  
+
   return html;
 }
 
 // 绑定分析事件
 function bindAnalysisEvents(itemStats) {
-  const itemTypeSelect = document.getElementById('itemTypeSelect');
-  const analysisTypeSelect = document.getElementById('analysisTypeSelect');
-  const minCountInput = document.getElementById('minCountInput');
-  const sortOrderSelect = document.getElementById('sortOrderSelect');
-  const applyBtn = document.getElementById('applyAnalysisBtn');
-  const exportBtn = document.getElementById('exportAnalysisBtn');
-  
+  const itemTypeSelect = document.getElementById("itemTypeSelect");
+  const analysisTypeSelect = document.getElementById("analysisTypeSelect");
+  const minCountInput = document.getElementById("minCountInput");
+  const sortOrderSelect = document.getElementById("sortOrderSelect");
+  const applyBtn = document.getElementById("applyAnalysisBtn");
+  const exportBtn = document.getElementById("exportAnalysisBtn");
+
   // 应用筛选
   function applyAnalysis() {
     const itemType = itemTypeSelect.value;
     const analysisType = analysisTypeSelect.value;
     const minCount = parseInt(minCountInput.value) || 1;
     const sortOrder = sortOrderSelect.value;
-    
-    console.log('应用分析筛选:', { itemType, analysisType, minCount, sortOrder });
-    
-    const results = calculateAnalysisResults(itemStats[itemType], analysisType, minCount, sortOrder);
+
+    const results = calculateAnalysisResults(
+      itemStats[itemType],
+      analysisType,
+      minCount,
+      sortOrder
+    );
     displayAnalysisResults(results, itemType, analysisType);
     updateSummaryStats(itemStats[itemType], itemType);
   }
-  
+
   // 绑定事件
   if (applyBtn) {
-    applyBtn.addEventListener('click', applyAnalysis);
+    applyBtn.addEventListener("click", applyAnalysis);
   }
-  
+
   if (exportBtn) {
-    exportBtn.addEventListener('click', () => exportAnalysisResults(itemStats));
+    exportBtn.addEventListener("click", () => exportAnalysisResults(itemStats));
   }
-  
+
   // 自动触发初始分析
   setTimeout(applyAnalysis, 100);
 }
@@ -684,13 +784,13 @@ function bindAnalysisEvents(itemStats) {
 // 计算分析结果
 function calculateAnalysisResults(stats, analysisType, minCount, sortOrder) {
   const results = [];
-  
-  if (analysisType === 'select') {
+
+  if (analysisType === "select") {
     // 选择率分析
-    Object.keys(stats.show).forEach(itemId => {
+    Object.keys(stats.show).forEach((itemId) => {
       const showCount = stats.show[itemId];
       const selectCount = stats.select[itemId] || 0;
-      
+
       if (showCount >= minCount) {
         const rate = showCount > 0 ? (selectCount / showCount) * 100 : 0;
         results.push({
@@ -699,14 +799,14 @@ function calculateAnalysisResults(stats, analysisType, minCount, sortOrder) {
           rate: rate,
           count: selectCount,
           total: showCount,
-          type: 'select'
+          type: "select",
         });
       }
     });
-    
+
     // 如果没有show数据，使用select数据
     if (results.length === 0) {
-      Object.keys(stats.select).forEach(itemId => {
+      Object.keys(stats.select).forEach((itemId) => {
         const selectCount = stats.select[itemId];
         if (selectCount >= minCount) {
           results.push({
@@ -715,18 +815,17 @@ function calculateAnalysisResults(stats, analysisType, minCount, sortOrder) {
             rate: 100,
             count: selectCount,
             total: selectCount,
-            type: 'select'
+            type: "select",
           });
         }
       });
     }
-    
-  } else if (analysisType === 'buy') {
+  } else if (analysisType === "buy") {
     // 购买率分析
-    Object.keys(stats.show).forEach(itemId => {
+    Object.keys(stats.show).forEach((itemId) => {
       const showCount = stats.show[itemId];
       const buyCount = stats.buy[itemId] || 0;
-      
+
       if (showCount >= minCount) {
         const rate = showCount > 0 ? (buyCount / showCount) * 100 : 0;
         results.push({
@@ -735,14 +834,14 @@ function calculateAnalysisResults(stats, analysisType, minCount, sortOrder) {
           rate: rate,
           count: buyCount,
           total: showCount,
-          type: 'buy'
+          type: "buy",
         });
       }
     });
-    
+
     // 如果没有show数据，使用buy数据
     if (results.length === 0) {
-      Object.keys(stats.buy).forEach(itemId => {
+      Object.keys(stats.buy).forEach((itemId) => {
         const buyCount = stats.buy[itemId];
         if (buyCount >= minCount) {
           results.push({
@@ -751,26 +850,25 @@ function calculateAnalysisResults(stats, analysisType, minCount, sortOrder) {
             rate: 100,
             count: buyCount,
             total: buyCount,
-            type: 'buy'
+            type: "buy",
           });
         }
       });
     }
-    
-  } else if (analysisType === 'popularity') {
+  } else if (analysisType === "popularity") {
     // 热门度分析（基于总出现次数）
     const allItems = new Set([
       ...Object.keys(stats.show),
       ...Object.keys(stats.select),
-      ...Object.keys(stats.buy)
+      ...Object.keys(stats.buy),
     ]);
-    
-    allItems.forEach(itemId => {
+
+    allItems.forEach((itemId) => {
       const showCount = stats.show[itemId] || 0;
       const selectCount = stats.select[itemId] || 0;
       const buyCount = stats.buy[itemId] || 0;
       const totalCount = showCount + selectCount + buyCount;
-      
+
       if (totalCount >= minCount) {
         results.push({
           id: itemId,
@@ -778,83 +876,84 @@ function calculateAnalysisResults(stats, analysisType, minCount, sortOrder) {
           rate: totalCount,
           count: selectCount + buyCount,
           total: totalCount,
-          type: 'popularity'
+          type: "popularity",
         });
       }
     });
   }
-  
+
   // 排序
   results.sort((a, b) => {
-    return sortOrder === 'desc' ? b.rate - a.rate : a.rate - b.rate;
+    return sortOrder === "desc" ? b.rate - a.rate : a.rate - b.rate;
   });
-  
+
   return results;
 }
 
 // 显示分析结果
 function displayAnalysisResults(results, itemType, analysisType) {
-  const resultsTitle = document.getElementById('resultsTitle');
-  const resultsCount = document.getElementById('resultsCount');
-  const resultsRange = document.getElementById('resultsRange');
-  const analysisChart = document.getElementById('analysisChart');
-  const analysisTable = document.getElementById('analysisTable');
-  
+  const resultsTitle = document.getElementById("resultsTitle");
+  const resultsCount = document.getElementById("resultsCount");
+  const resultsRange = document.getElementById("resultsRange");
+  const analysisChart = document.getElementById("analysisChart");
+  const analysisTable = document.getElementById("analysisTable");
+
   // 更新标题和统计
   const typeNames = {
-    cards: '🃏 卡牌',
-    relics: '🏺 遗物',
-    blessings: '✨ 祝福'
+    cards: "🃏 卡牌",
+    relics: "🏺 遗物",
+    blessings: "✨ 祝福",
   };
-  
+
   const analysisNames = {
-    select: '选择率',
-    buy: '购买率',
-    popularity: '热门度'
+    select: "选择率",
+    buy: "购买率",
+    popularity: "热门度",
   };
-  
+
   if (resultsTitle) {
     resultsTitle.textContent = `${typeNames[itemType]} ${analysisNames[analysisType]}分析`;
   }
-  
+
   if (resultsCount) {
     resultsCount.textContent = `共 ${results.length} 项`;
   }
-  
+
   if (resultsRange) {
     const displayCount = Math.min(results.length, 20);
     resultsRange.textContent = `显示前 ${displayCount} 项`;
   }
-  
+
   // 生成图表
   if (analysisChart) {
     analysisChart.innerHTML = generateChart(results.slice(0, 10), analysisType);
   }
-  
+
   // 生成表格
   if (analysisTable) {
     analysisTable.innerHTML = generateTable(results.slice(0, 20), analysisType);
   }
 }
 
-JAVASCRIPT
 // 生成图表HTML
 function generateChart(data, analysisType) {
   if (data.length === 0) {
     return '<div class="no-data">没有数据可显示</div>';
   }
-  
-  const maxValue = Math.max(...data.map(item => item.rate));
-  const unit = analysisType === 'popularity' ? '次' : '%';
-  
+
+  const maxValue = Math.max(...data.map((item) => item.rate));
+  const unit = analysisType === "popularity" ? "次" : "%";
+
   let html = '<div class="chart-container">';
-  
+
   data.forEach((item, index) => {
     const percentage = maxValue > 0 ? (item.rate / maxValue) * 100 : 0;
     const color = getChartColor(index);
-    
+
     html += `
-      <div class="chart-item" title="${item.name}: ${item.rate.toFixed(1)}${unit} (${item.count}/${item.total})">
+      <div class="chart-item" title="${item.name}: ${item.rate.toFixed(
+      1
+    )}${unit} (${item.count}/${item.total})">
         <div class="chart-bar">
           <div class="chart-bar-fill" style="width: ${percentage}%; background: ${color}"></div>
         </div>
@@ -865,8 +964,8 @@ function generateChart(data, analysisType) {
       </div>
     `;
   });
-  
-  html += '</div>';
+
+  html += "</div>";
   return html;
 }
 
@@ -875,41 +974,43 @@ function generateTable(data, analysisType) {
   if (data.length === 0) {
     return '<div class="no-data">没有数据可显示</div>';
   }
-  
-  const unit = analysisType === 'popularity' ? '次' : '%';
+
+  const unit = analysisType === "popularity" ? "次" : "%";
   const headers = {
-    select: ['排名', '物品名称', '选择率', '选择次数', '出现次数'],
-    buy: ['排名', '物品名称', '购买率', '购买次数', '出现次数'],
-    popularity: ['排名', '物品名称', '热门度', '互动次数', '总出现次数']
+    select: ["排名", "物品名称", "选择率", "选择次数", "出现次数"],
+    buy: ["排名", "物品名称", "购买率", "购买次数", "出现次数"],
+    popularity: ["排名", "物品名称", "热门度", "互动次数", "总出现次数"],
   };
-  
+
   let html = `
     <div class="table-container">
       <table class="analysis-table-grid">
         <thead>
           <tr>
   `;
-  
-  headers[analysisType].forEach(header => {
+
+  headers[analysisType].forEach((header) => {
     html += `<th>${header}</th>`;
   });
-  
+
   html += `
           </tr>
         </thead>
         <tbody>
   `;
-  
+
   data.forEach((item, index) => {
-    const rankClass = index < 3 ? `rank-${index + 1}` : '';
+    const rankClass = index < 3 ? `rank-${index + 1}` : "";
     html += `
       <tr class="${rankClass}">
         <td class="rank-cell">
           <span class="rank-number">#${index + 1}</span>
-          ${index < 3 ? '<span class="rank-medal">🏆</span>' : ''}
+          ${index < 3 ? '<span class="rank-medal">🏆</span>' : ""}
         </td>
         <td class="name-cell">
-          <span class="item-name clickable-item" data-item-id="${item.id}" data-item-name="${item.name}">
+          <span class="item-name clickable-item" data-item-id="${
+            item.id
+          }" data-item-name="${item.name}">
             ${item.name} 🔍
           </span>
           <span class="item-id">${item.id}</span>
@@ -917,7 +1018,10 @@ function generateTable(data, analysisType) {
         <td class="rate-cell">
           <span class="rate-value">${item.rate.toFixed(1)}${unit}</span>
           <div class="rate-bar">
-            <div class="rate-bar-fill" style="width: ${Math.min(item.rate, 100)}%"></div>
+            <div class="rate-bar-fill" style="width: ${Math.min(
+              item.rate,
+              100
+            )}%"></div>
           </div>
         </td>
         <td class="count-cell">${item.count}</td>
@@ -925,48 +1029,48 @@ function generateTable(data, analysisType) {
       </tr>
     `;
   });
-  
+
   html += `
         </tbody>
       </table>
     </div>
   `;
-  
+
   // 绑定点击事件
   setTimeout(() => {
-    document.querySelectorAll('.clickable-item').forEach(item => {
-      item.addEventListener('click', function() {
-        const itemId = this.getAttribute('data-item-id');
-        const itemName = this.getAttribute('data-item-name');
+    document.querySelectorAll(".clickable-item").forEach((item) => {
+      item.addEventListener("click", function () {
+        const itemId = this.getAttribute("data-item-id");
+        const itemName = this.getAttribute("data-item-name");
         showItemDetail(itemId, itemName);
       });
     });
   }, 100);
-  
+
   return html;
 }
 
 // 显示物品详情
 function showItemDetail(itemId, itemName) {
   console.log(`显示物品详情: ${itemName} (${itemId})`);
-  
+
   // 创建模态框
   const modal = createItemDetailModal(itemId, itemName);
   document.body.appendChild(modal);
-  
+
   // 显示模态框
   setTimeout(() => {
-    modal.classList.add('show');
+    modal.classList.add("show");
   }, 10);
-  
+
   // 加载详情数据
   loadItemDetailData(itemId, itemName);
 }
 
 // 创建物品详情模态框
 function createItemDetailModal(itemId, itemName) {
-  const modal = document.createElement('div');
-  modal.className = 'item-detail-modal';
+  const modal = document.createElement("div");
+  modal.className = "item-detail-modal";
   modal.innerHTML = `
     <div class="modal-backdrop"></div>
     <div class="modal-content">
@@ -1031,7 +1135,7 @@ function createItemDetailModal(itemId, itemName) {
       </div>
     </div>
   `;
-  
+
   return modal;
 }
 
@@ -1040,7 +1144,7 @@ function createItemDetailModal(itemId, itemName) {
 function loadItemDetailData(itemId, itemName) {
   try {
     console.log(`开始分析物品: ${itemId}`);
-    
+
     // 初始化层数数据 (1-30层)
     const layerData = {};
     for (let i = 1; i <= 30; i++) {
@@ -1048,13 +1152,16 @@ function loadItemDetailData(itemId, itemName) {
         show: 0,
         select: 0,
         buy: 0,
-        total: 0
+        total: 0,
       };
     }
-    
-    let totalShow = 0, totalSelect = 0, totalBuy = 0;
-    let firstSeen = null, lastSeen = null;
-    
+
+    let totalShow = 0,
+      totalSelect = 0,
+      totalBuy = 0;
+    let firstSeen = null,
+      lastSeen = null;
+
     // 分析所有数据
     allData.forEach((record, index) => {
       try {
@@ -1064,25 +1171,31 @@ function loadItemDetailData(itemId, itemName) {
         } else {
           parsedData = record.data;
         }
-        
+
         if (parsedData) {
           // 获取层数信息
-          const layer = parsedData.Layer || parsedData.level || parsedData.floor || 1;
+          const layer =
+            parsedData.Layer || parsedData.level || parsedData.floor || 1;
           const normalizedLayer = Math.min(Math.max(parseInt(layer), 1), 30);
-          
+
           // 检查是否包含目标物品
-          let foundInShow = false, foundInSelect = false, foundInBuy = false;
-          
+          let foundInShow = false,
+            foundInSelect = false,
+            foundInBuy = false;
+
           // 检查各种数据结构
-          ['Cards', 'Relics', 'Blessings'].forEach(itemType => {
+          ["Cards", "Relics", "Blessings"].forEach((itemType) => {
             if (parsedData[itemType]) {
               const itemData = parsedData[itemType];
-              
+
               // 检查展示数据
-              ['RewardShow', 'ShopShow', 'Show'].forEach(showType => {
+              ["RewardShow", "ShopShow", "Show"].forEach((showType) => {
                 if (itemData[showType] && Array.isArray(itemData[showType])) {
-                  itemData[showType].forEach(item => {
-                    const currentItemId = typeof item === 'object' ? (item.Id || item.id || item) : item;
+                  itemData[showType].forEach((item) => {
+                    const currentItemId =
+                      typeof item === "object"
+                        ? item.Id || item.id || item
+                        : item;
                     if (currentItemId === itemId) {
                       foundInShow = true;
                       layerData[normalizedLayer].show++;
@@ -1091,12 +1204,18 @@ function loadItemDetailData(itemId, itemName) {
                   });
                 }
               });
-              
+
               // 检查选择数据
-              ['Select', 'Selected', 'Picked'].forEach(selectType => {
-                if (itemData[selectType] && Array.isArray(itemData[selectType])) {
-                  itemData[selectType].forEach(item => {
-                    const currentItemId = typeof item === 'object' ? (item.Id || item.id || item) : item;
+              ["Select", "Selected", "Picked"].forEach((selectType) => {
+                if (
+                  itemData[selectType] &&
+                  Array.isArray(itemData[selectType])
+                ) {
+                  itemData[selectType].forEach((item) => {
+                    const currentItemId =
+                      typeof item === "object"
+                        ? item.Id || item.id || item
+                        : item;
                     if (currentItemId === itemId) {
                       foundInSelect = true;
                       layerData[normalizedLayer].select++;
@@ -1105,12 +1224,15 @@ function loadItemDetailData(itemId, itemName) {
                   });
                 }
               });
-              
+
               // 检查购买数据
-              ['Buy', 'Bought', 'Purchased'].forEach(buyType => {
+              ["Buy", "Bought", "Purchased"].forEach((buyType) => {
                 if (itemData[buyType] && Array.isArray(itemData[buyType])) {
-                  itemData[buyType].forEach(item => {
-                    const currentItemId = typeof item === 'object' ? (item.Id || item.id || item) : item;
+                  itemData[buyType].forEach((item) => {
+                    const currentItemId =
+                      typeof item === "object"
+                        ? item.Id || item.id || item
+                        : item;
                     if (currentItemId === itemId) {
                       foundInBuy = true;
                       layerData[normalizedLayer].buy++;
@@ -1119,11 +1241,14 @@ function loadItemDetailData(itemId, itemName) {
                   });
                 }
               });
-              
+
               // 如果是数组格式，检查是否包含目标物品
               if (Array.isArray(itemData)) {
-                itemData.forEach(item => {
-                  const currentItemId = typeof item === 'object' ? (item.Id || item.id || item) : item;
+                itemData.forEach((item) => {
+                  const currentItemId =
+                    typeof item === "object"
+                      ? item.Id || item.id || item
+                      : item;
                   if (currentItemId === itemId) {
                     foundInSelect = true;
                     layerData[normalizedLayer].select++;
@@ -1133,13 +1258,15 @@ function loadItemDetailData(itemId, itemName) {
               }
             }
           });
-          
+
           // 更新总计数
           if (foundInShow || foundInSelect || foundInBuy) {
             layerData[normalizedLayer].total++;
-            
+
             // 更新首次和最后出现时间
-            const recordTime = new Date(record.created_at || record.timestamp || Date.now());
+            const recordTime = new Date(
+              record.created_at || record.timestamp || Date.now()
+            );
             if (!firstSeen || recordTime < firstSeen) {
               firstSeen = recordTime;
             }
@@ -1152,12 +1279,16 @@ function loadItemDetailData(itemId, itemName) {
         console.warn(`记录 ${index} 处理失败:`, e);
       }
     });
-    
+
     console.log(`物品 ${itemId} 分析完成:`, {
-      totalShow, totalSelect, totalBuy,
-      layerData: Object.keys(layerData).filter(layer => layerData[layer].total > 0)
+      totalShow,
+      totalSelect,
+      totalBuy,
+      layerData: Object.keys(layerData).filter(
+        (layer) => layerData[layer].total > 0
+      ),
     });
-    
+
     // 显示详情内容
     displayItemDetail({
       itemId,
@@ -1167,31 +1298,35 @@ function loadItemDetailData(itemId, itemName) {
       totalSelect,
       totalBuy,
       firstSeen,
-      lastSeen
+      lastSeen,
     });
-    
   } catch (error) {
-    console.error('物品详情加载失败:', error);
+    console.error("物品详情加载失败:", error);
     showItemDetailError(error.message);
   }
 }
 
-
 // 显示物品详情
 // 显示物品详情 - 删除相关物品部分
 function displayItemDetail(data) {
-  const loadingEl = document.querySelector('.item-detail-loading');
-  const contentEl = document.querySelector('.item-detail-content');
-  
-  if (loadingEl) loadingEl.style.display = 'none';
-  if (contentEl) contentEl.style.display = 'block';
-  
+  const loadingEl = document.querySelector(".item-detail-loading");
+  const contentEl = document.querySelector(".item-detail-content");
+
+  if (loadingEl) loadingEl.style.display = "none";
+  if (contentEl) contentEl.style.display = "block";
+
   // 填充基本信息
-  const basicInfoEl = document.getElementById('itemBasicInfo');
+  const basicInfoEl = document.getElementById("itemBasicInfo");
   if (basicInfoEl) {
-    const selectRate = data.totalShow > 0 ? ((data.totalSelect / data.totalShow) * 100).toFixed(1) : 'N/A';
-    const buyRate = data.totalShow > 0 ? ((data.totalBuy / data.totalShow) * 100).toFixed(1) : 'N/A';
-    
+    const selectRate =
+      data.totalShow > 0
+        ? ((data.totalSelect / data.totalShow) * 100).toFixed(1)
+        : "N/A";
+    const buyRate =
+      data.totalShow > 0
+        ? ((data.totalBuy / data.totalShow) * 100).toFixed(1)
+        : "N/A";
+
     basicInfoEl.innerHTML = `
       <div class="info-item">
         <span class="info-label">物品ID:</span>
@@ -1219,31 +1354,35 @@ function displayItemDetail(data) {
       </div>
       <div class="info-item">
         <span class="info-label">首次出现:</span>
-        <span class="info-value">${data.firstSeen ? data.firstSeen.toLocaleString() : 'N/A'}</span>
+        <span class="info-value">${
+          data.firstSeen ? data.firstSeen.toLocaleString() : "N/A"
+        }</span>
       </div>
       <div class="info-item">
         <span class="info-label">最后出现:</span>
-        <span class="info-value">${data.lastSeen ? data.lastSeen.toLocaleString() : 'N/A'}</span>
+        <span class="info-value">${
+          data.lastSeen ? data.lastSeen.toLocaleString() : "N/A"
+        }</span>
       </div>
     `;
   }
-  
+
   // 生成层数图表
-  generateLayerChart(data.layerData, 'show');
-  
+  generateLayerChart(data.layerData, "show");
+
   // 绑定图表更新事件
-  const updateBtn = document.getElementById('updateLayerChart');
-  const typeSelect = document.getElementById('layerAnalysisType');
-  
+  const updateBtn = document.getElementById("updateLayerChart");
+  const typeSelect = document.getElementById("layerAnalysisType");
+
   if (updateBtn && typeSelect) {
-    updateBtn.addEventListener('click', () => {
+    updateBtn.addEventListener("click", () => {
       const analysisType = typeSelect.value;
       generateLayerChart(data.layerData, analysisType);
     });
   }
-  
+
   // 填充详细统计
-  const detailStatsEl = document.getElementById('itemDetailStats');
+  const detailStatsEl = document.getElementById("itemDetailStats");
   if (detailStatsEl) {
     const layerStats = calculateLayerStats(data.layerData);
     detailStatsEl.innerHTML = `
@@ -1252,11 +1391,15 @@ function displayItemDetail(data) {
         <div class="stat-content">
           <div class="stat-row">
             <span>最高选择率:</span>
-            <span class="stat-highlight">第${layerStats.bestSelectLayer}层 (${layerStats.bestSelectRate}%)</span>
+            <span class="stat-highlight">第${layerStats.bestSelectLayer}层 (${
+      layerStats.bestSelectRate
+    }%)</span>
           </div>
           <div class="stat-row">
             <span>最高出现频率:</span>
-            <span class="stat-highlight">第${layerStats.mostFrequentLayer}层 (${layerStats.mostFrequentCount}次)</span>
+            <span class="stat-highlight">第${layerStats.mostFrequentLayer}层 (${
+      layerStats.mostFrequentCount
+    }次)</span>
           </div>
         </div>
       </div>
@@ -1266,7 +1409,9 @@ function displayItemDetail(data) {
         <div class="stat-content">
           <div class="stat-row">
             <span>出现层数范围:</span>
-            <span class="stat-highlight">${layerStats.minLayer} - ${layerStats.maxLayer}层</span>
+            <span class="stat-highlight">${layerStats.minLayer} - ${
+      layerStats.maxLayer
+    }层</span>
           </div>
           <div class="stat-row">
             <span>活跃层数:</span>
@@ -1274,7 +1419,9 @@ function displayItemDetail(data) {
           </div>
           <div class="stat-row">
             <span>平均每层出现:</span>
-            <span class="stat-highlight">${layerStats.avgPerLayer.toFixed(1)}次</span>
+            <span class="stat-highlight">${layerStats.avgPerLayer.toFixed(
+              1
+            )}次</span>
           </div>
         </div>
       </div>
@@ -1284,20 +1431,32 @@ function displayItemDetail(data) {
         <div class="stat-content">
           <div class="stat-row">
             <span>前期表现 (1-10层):</span>
-            <span class="stat-highlight ${layerStats.earlyTrend > 0 ? 'trend-up' : 'trend-down'}">
-              ${layerStats.earlyPerformance}% ${layerStats.earlyTrend > 0 ? '↗️' : '↘️'}
+            <span class="stat-highlight ${
+              layerStats.earlyTrend > 0 ? "trend-up" : "trend-down"
+            }">
+              ${layerStats.earlyPerformance}% ${
+      layerStats.earlyTrend > 0 ? "↗️" : "↘️"
+    }
             </span>
           </div>
           <div class="stat-row">
             <span>中期表现 (11-20层):</span>
-            <span class="stat-highlight ${layerStats.midTrend > 0 ? 'trend-up' : 'trend-down'}">
-              ${layerStats.midPerformance}% ${layerStats.midTrend > 0 ? '↗️' : '↘️'}
+            <span class="stat-highlight ${
+              layerStats.midTrend > 0 ? "trend-up" : "trend-down"
+            }">
+              ${layerStats.midPerformance}% ${
+      layerStats.midTrend > 0 ? "↗️" : "↘️"
+    }
             </span>
           </div>
           <div class="stat-row">
             <span>后期表现 (21-30层):</span>
-            <span class="stat-highlight ${layerStats.lateTrend > 0 ? 'trend-up' : 'trend-down'}">
-              ${layerStats.latePerformance}% ${layerStats.lateTrend > 0 ? '↗️' : '↘️'}
+            <span class="stat-highlight ${
+              layerStats.lateTrend > 0 ? "trend-up" : "trend-down"
+            }">
+              ${layerStats.latePerformance}% ${
+      layerStats.lateTrend > 0 ? "↗️" : "↘️"
+    }
             </span>
           </div>
         </div>
@@ -1306,29 +1465,30 @@ function displayItemDetail(data) {
   }
 }
 
-
 // 生成层数图表
 function generateLayerChart(layerData, analysisType) {
-  const chartEl = document.getElementById('layerChart');
+  const chartEl = document.getElementById("layerChart");
   if (!chartEl) return;
-  
-  const maxValue = Math.max(...Object.keys(layerData).map(layer => {
-    if (analysisType === 'rate') {
-      const show = layerData[layer].show;
-      const select = layerData[layer].select;
-      return show > 0 ? (select / show) * 100 : 0;
-    }
-    return layerData[layer][analysisType] || 0;
-  }));
-  
-  const unit = analysisType === 'rate' ? '%' : '次';
+
+  const maxValue = Math.max(
+    ...Object.keys(layerData).map((layer) => {
+      if (analysisType === "rate") {
+        const show = layerData[layer].show;
+        const select = layerData[layer].select;
+        return show > 0 ? (select / show) * 100 : 0;
+      }
+      return layerData[layer][analysisType] || 0;
+    })
+  );
+
+  const unit = analysisType === "rate" ? "%" : "次";
   const title = {
-    show: '出现次数',
-    select: '选择次数', 
-    buy: '购买次数',
-    rate: '选择率'
+    show: "出现次数",
+    select: "选择次数",
+    buy: "购买次数",
+    rate: "选择率",
   }[analysisType];
-  
+
   let chartHtml = `
     <div class="layer-chart-header">
       <h4>📊 ${title}分布图</h4>
@@ -1341,67 +1501,72 @@ function generateLayerChart(layerData, analysisType) {
     </div>
     <div class="layer-chart-grid">
   `;
-  
+
   for (let layer = 1; layer <= 30; layer++) {
     const data = layerData[layer];
     let value = 0;
-    
-    if (analysisType === 'rate') {
+
+    if (analysisType === "rate") {
       value = data.show > 0 ? (data.select / data.show) * 100 : 0;
     } else {
       value = data[analysisType] || 0;
     }
-    
+
     const percentage = maxValue > 0 ? (value / maxValue) * 100 : 0;
     const hasData = value > 0;
-    
+
     chartHtml += `
-      <div class="layer-bar ${hasData ? 'has-data' : ''}" 
-           title="第${layer}层: ${value.toFixed(1)}${unit}${analysisType === 'rate' ? ` (${data.select}/${data.show})` : ''}">
+      <div class="layer-bar ${hasData ? "has-data" : ""}" 
+           title="第${layer}层: ${value.toFixed(1)}${unit}${
+      analysisType === "rate" ? ` (${data.select}/${data.show})` : ""
+    }">
         <div class="layer-bar-fill" style="height: ${percentage}%"></div>
         <div class="layer-label">${layer}</div>
-        <div class="layer-value">${hasData ? value.toFixed(0) : ''}</div>
+        <div class="layer-value">${hasData ? value.toFixed(0) : ""}</div>
       </div>
     `;
   }
-  
+
   chartHtml += `
     </div>
     <div class="chart-stats">
       <p>💡 提示: 鼠标悬停在柱子上查看详细数据</p>
     </div>
   `;
-  
+
   chartEl.innerHTML = chartHtml;
 }
 
 // 计算层数统计
 function calculateLayerStats(layerData) {
-  let bestSelectLayer = 1, bestSelectRate = 0;
-  let mostFrequentLayer = 1, mostFrequentCount = 0;
-  let minLayer = 30, maxLayer = 1;
+  let bestSelectLayer = 1,
+    bestSelectRate = 0;
+  let mostFrequentLayer = 1,
+    mostFrequentCount = 0;
+  let minLayer = 30,
+    maxLayer = 1;
   let activeLayers = 0;
   let totalAppearances = 0;
-  
+
   // 计算各种统计数据
-  Object.keys(layerData).forEach(layer => {
+  Object.keys(layerData).forEach((layer) => {
     const data = layerData[layer];
     const layerNum = parseInt(layer);
-    
+
     if (data.total > 0) {
       activeLayers++;
       totalAppearances += data.show;
-      
+
       if (layerNum < minLayer) minLayer = layerNum;
       if (layerNum > maxLayer) maxLayer = layerNum;
-      
+
       // 最高选择率
       const selectRate = data.show > 0 ? (data.select / data.show) * 100 : 0;
       if (selectRate > bestSelectRate) {
         bestSelectRate = selectRate;
         bestSelectLayer = layerNum;
       }
-      
+
       // 最高出现频率
       if (data.show > mostFrequentCount) {
         mostFrequentCount = data.show;
@@ -1409,15 +1574,16 @@ function calculateLayerStats(layerData) {
       }
     }
   });
-  
+
   // 计算趋势
-  const earlyLayers = [1,2,3,4,5,6,7,8,9,10];
-  const midLayers = [11,12,13,14,15,16,17,18,19,20];
-  const lateLayers = [21,22,23,24,25,26,27,28,29,30];
-  
+  const earlyLayers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const midLayers = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
+  const lateLayers = [21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
+
   const calculatePeriodPerformance = (layers) => {
-    let totalShow = 0, totalSelect = 0;
-    layers.forEach(layer => {
+    let totalShow = 0,
+      totalSelect = 0;
+    layers.forEach((layer) => {
       if (layerData[layer]) {
         totalShow += layerData[layer].show;
         totalSelect += layerData[layer].select;
@@ -1425,11 +1591,11 @@ function calculateLayerStats(layerData) {
     });
     return totalShow > 0 ? (totalSelect / totalShow) * 100 : 0;
   };
-  
+
   const earlyPerformance = calculatePeriodPerformance(earlyLayers);
   const midPerformance = calculatePeriodPerformance(midLayers);
   const latePerformance = calculatePeriodPerformance(lateLayers);
-  
+
   return {
     bestSelectLayer,
     bestSelectRate: bestSelectRate.toFixed(1),
@@ -1444,13 +1610,13 @@ function calculateLayerStats(layerData) {
     latePerformance: latePerformance.toFixed(1),
     earlyTrend: midPerformance - earlyPerformance,
     midTrend: latePerformance - midPerformance,
-    lateTrend: latePerformance - midPerformance
+    lateTrend: latePerformance - midPerformance,
   };
 }
 
 // 显示错误信息
 function showItemDetailError(message) {
-  const loadingEl = document.querySelector('.item-detail-loading');
+  const loadingEl = document.querySelector(".item-detail-loading");
   if (loadingEl) {
     loadingEl.innerHTML = `
       <div class="error-icon">❌</div>
@@ -1465,9 +1631,9 @@ function showItemDetailError(message) {
 
 // 关闭物品详情
 function closeItemDetail() {
-  const modal = document.querySelector('.item-detail-modal');
+  const modal = document.querySelector(".item-detail-modal");
   if (modal) {
-    modal.classList.remove('show');
+    modal.classList.remove("show");
     setTimeout(() => {
       document.body.removeChild(modal);
     }, 300);
@@ -1478,63 +1644,67 @@ function closeItemDetail() {
 function exportItemDetail(itemId, itemName) {
   try {
     console.log(`导出物品详情: ${itemName}`);
-    
+
     // 获取当前显示的数据
-    const basicInfo = document.getElementById('itemBasicInfo');
-    const detailStats = document.getElementById('itemDetailStats');
-    
+    const basicInfo = document.getElementById("itemBasicInfo");
+    const detailStats = document.getElementById("itemDetailStats");
+
     if (!basicInfo || !detailStats) {
-      alert('没有可导出的数据');
+      alert("没有可导出的数据");
       return;
     }
-    
+
     // 准备导出数据
     const exportData = [];
-    
+
     // 添加基本信息
-    exportData.push(['=== 物品详情分析报告 ===']);
-    exportData.push(['物品名称', itemName]);
-    exportData.push(['物品ID', itemId]);
-    exportData.push(['导出时间', new Date().toLocaleString()]);
-    exportData.push(['']);
-    
+    exportData.push(["=== 物品详情分析报告 ==="]);
+    exportData.push(["物品名称", itemName]);
+    exportData.push(["物品ID", itemId]);
+    exportData.push(["导出时间", new Date().toLocaleString()]);
+    exportData.push([""]);
+
     // 添加基本统计
-    exportData.push(['=== 基本统计 ===']);
-    const infoItems = basicInfo.querySelectorAll('.info-item');
-    infoItems.forEach(item => {
-      const label = item.querySelector('.info-label')?.textContent || '';
-      const value = item.querySelector('.info-value')?.textContent || '';
-      exportData.push([label.replace(':', ''), value]);
+    exportData.push(["=== 基本统计 ==="]);
+    const infoItems = basicInfo.querySelectorAll(".info-item");
+    infoItems.forEach((item) => {
+      const label = item.querySelector(".info-label")?.textContent || "";
+      const value = item.querySelector(".info-value")?.textContent || "";
+      exportData.push([label.replace(":", ""), value]);
     });
-    exportData.push(['']);
-    
+    exportData.push([""]);
+
     // 添加层数数据
-    exportData.push(['=== 层数分析 ===']);
-    exportData.push(['层数', '出现次数', '选择次数', '购买次数', '选择率']);
-    
+    exportData.push(["=== 层数分析 ==="]);
+    exportData.push(["层数", "出现次数", "选择次数", "购买次数", "选择率"]);
+
     // 这里需要从当前数据中获取层数信息
     // 由于数据在闭包中，我们需要重新计算或者存储在全局变量中
-    
+
     // 转换为CSV
-    const csvContent = exportData.map(row => 
-      row.map(field => `"${field}"`).join(",")
-    ).join("\n");
-    
+    const csvContent = exportData
+      .map((row) => row.map((field) => `"${field}"`).join(","))
+      .join("\n");
+
     // 创建下载
-    const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob(["\ufeff" + csvContent], {
+      type: "text/csv;charset=utf-8;",
+    });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
-    
+
     link.setAttribute("href", url);
-    link.setAttribute("download", `${itemName}_详情分析_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute(
+      "download",
+      `${itemName}_详情分析_${new Date().toISOString().slice(0, 10)}.csv`
+    );
     link.style.visibility = "hidden";
-    
+
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    
+
     console.log("✅ 物品详情导出成功");
-    
   } catch (error) {
     console.error("❌ 物品详情导出失败:", error);
     alert("导出失败: " + error.message);
@@ -1542,36 +1712,44 @@ function exportItemDetail(itemId, itemName) {
 }
 
 // 点击背景关闭模态框
-document.addEventListener('click', function(e) {
-  if (e.target.classList.contains('modal-backdrop')) {
+document.addEventListener("click", function (e) {
+  if (e.target.classList.contains("modal-backdrop")) {
     closeItemDetail();
   }
 });
 
 // ESC键关闭模态框
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') {
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape") {
     closeItemDetail();
   }
 });
 
-
 // 更新统计概览
 function updateSummaryStats(stats, itemType) {
-  const summaryStats = document.getElementById('summaryStats');
-  const topItems = document.getElementById('topItems');
-  const trendAnalysis = document.getElementById('trendAnalysis');
-  
+  const summaryStats = document.getElementById("summaryStats");
+  const topItems = document.getElementById("topItems");
+  const trendAnalysis = document.getElementById("trendAnalysis");
+
   if (summaryStats) {
-    const totalShow = Object.values(stats.show).reduce((sum, count) => sum + count, 0);
-    const totalSelect = Object.values(stats.select).reduce((sum, count) => sum + count, 0);
-    const totalBuy = Object.values(stats.buy).reduce((sum, count) => sum + count, 0);
+    const totalShow = Object.values(stats.show).reduce(
+      (sum, count) => sum + count,
+      0
+    );
+    const totalSelect = Object.values(stats.select).reduce(
+      (sum, count) => sum + count,
+      0
+    );
+    const totalBuy = Object.values(stats.buy).reduce(
+      (sum, count) => sum + count,
+      0
+    );
     const uniqueItems = new Set([
       ...Object.keys(stats.show),
       ...Object.keys(stats.select),
-      ...Object.keys(stats.buy)
+      ...Object.keys(stats.buy),
     ]).size;
-    
+
     summaryStats.innerHTML = `
       <div class="stat-item">
         <span class="stat-label">不同物品数量:</span>
@@ -1591,84 +1769,123 @@ function updateSummaryStats(stats, itemType) {
       </div>
       <div class="stat-item">
         <span class="stat-label">平均选择率:</span>
-        <span class="stat-value">${totalShow > 0 ? ((totalSelect / totalShow) * 100).toFixed(1) : 0}%</span>
+        <span class="stat-value">${
+          totalShow > 0 ? ((totalSelect / totalShow) * 100).toFixed(1) : 0
+        }%</span>
       </div>
     `;
-  }
-  
-  if (topItems) {
-    // 找出最热门的5个物品
-    const allItems = new Set([
-      ...Object.keys(stats.show),
-      ...Object.keys(stats.select),
-      ...Object.keys(stats.buy)
-    ]);
-    
-    const topItemsList = Array.from(allItems)
-      .map(itemId => ({
-        id: itemId,
-        name: formatItemName(itemId),
-        total: (stats.show[itemId] || 0) + (stats.select[itemId] || 0) + (stats.buy[itemId] || 0)
-      }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 5);
-    
-    let topItemsHtml = '';
-    topItemsList.forEach((item, index) => {
-      topItemsHtml += `
+
+    if (topItems) {
+      // 找出最热门的5个物品
+      const allItems = new Set([
+        ...Object.keys(stats.show),
+        ...Object.keys(stats.select),
+        ...Object.keys(stats.buy),
+      ]);
+
+      const topItemsList = Array.from(allItems)
+        .map((itemId) => ({
+          id: itemId,
+          name: formatItemName(itemId),
+          total:
+            (stats.show[itemId] || 0) +
+            (stats.select[itemId] || 0) +
+            (stats.buy[itemId] || 0),
+        }))
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 5);
+
+      let topItemsHtml = "";
+      topItemsList.forEach((item, index) => {
+        topItemsHtml += `
         <div class="top-item">
           <span class="top-rank">#${index + 1}</span>
           <span class="top-name">${item.name}</span>
           <span class="top-count">${item.total}次</span>
         </div>
       `;
-    });
-    
-    topItems.innerHTML = topItemsHtml || '<div class="no-data">暂无数据</div>';
-  }
-  
-  if (trendAnalysis) {
-    // 简单的趋势分析
-    const selectRate = totalShow > 0 ? (totalSelect / totalShow) * 100 : 0;
-    const buyRate = totalShow > 0 ? (totalBuy / totalShow) * 100 : 0;
-    
-    let trendHtml = `
+      });
+
+      topItems.innerHTML =
+        topItemsHtml || '<div class="no-data">暂无数据</div>';
+    }
+
+    if (trendAnalysis) {
+      // 简单的趋势分析
+      const selectRate = totalShow > 0 ? (totalSelect / totalShow) * 100 : 0;
+      const buyRate = totalShow > 0 ? (totalBuy / totalShow) * 100 : 0;
+
+      let trendHtml = `
       <div class="trend-item">
         <span class="trend-label">整体选择率:</span>
-        <span class="trend-value ${selectRate > 50 ? 'trend-high' : selectRate > 25 ? 'trend-medium' : 'trend-low'}">${selectRate.toFixed(1)}%</span>
+        <span class="trend-value ${
+          selectRate > 50
+            ? "trend-high"
+            : selectRate > 25
+            ? "trend-medium"
+            : "trend-low"
+        }">${selectRate.toFixed(1)}%</span>
       </div>
       <div class="trend-item">
         <span class="trend-label">整体购买率:</span>
-        <span class="trend-value ${buyRate > 30 ? 'trend-high' : buyRate > 15 ? 'trend-medium' : 'trend-low'}">${buyRate.toFixed(1)}%</span>
+        <span class="trend-value ${
+          buyRate > 30
+            ? "trend-high"
+            : buyRate > 15
+            ? "trend-medium"
+            : "trend-low"
+        }">${buyRate.toFixed(1)}%</span>
       </div>
       <div class="trend-item">
         <span class="trend-label">物品多样性:</span>
-        <span class="trend-value ${uniqueItems > 50 ? 'trend-high' : uniqueItems > 25 ? 'trend-medium' : 'trend-low'}">${uniqueItems > 50 ? '丰富' : uniqueItems > 25 ? '一般' : '较少'}</span>
+        <span class="trend-value ${
+          uniqueItems > 50
+            ? "trend-high"
+            : uniqueItems > 25
+            ? "trend-medium"
+            : "trend-low"
+        }">${
+        uniqueItems > 50 ? "丰富" : uniqueItems > 25 ? "一般" : "较少"
+      }</span>
       </div>
     `;
-    
-    trendAnalysis.innerHTML = trendHtml;
+
+      trendAnalysis.innerHTML = trendHtml;
+    }
   }
 }
 
 // 导出分析结果
 function exportAnalysisResults(itemStats) {
   try {
-    const itemTypeSelect = document.getElementById('itemTypeSelect');
-    const analysisTypeSelect = document.getElementById('analysisTypeSelect');
-    const minCountInput = document.getElementById('minCountInput');
-    
-    const itemType = itemTypeSelect?.value || 'cards';
-    const analysisType = analysisTypeSelect?.value || 'select';
+    const itemTypeSelect = document.getElementById("itemTypeSelect");
+    const analysisTypeSelect = document.getElementById("analysisTypeSelect");
+    const minCountInput = document.getElementById("minCountInput");
+
+    const itemType = itemTypeSelect?.value || "cards";
+    const analysisType = analysisTypeSelect?.value || "select";
     const minCount = parseInt(minCountInput?.value) || 1;
-    
-    const results = calculateAnalysisResults(itemStats[itemType], analysisType, minCount, 'desc');
-    
+
+    const results = calculateAnalysisResults(
+      itemStats[itemType],
+      analysisType,
+      minCount,
+      "desc"
+    );
+
     // 准备CSV数据
     const csvData = [];
-    const headers = ['排名', '物品ID', '物品名称', '数值', '计数', '总数', '类型'];
+    const headers = [
+      "排名",
+      "物品ID",
+      "物品名称",
+      "数值",
+      "计数",
+      "总数",
+      "类型",
+    ];
     csvData.push(headers);
-    
+
     results.forEach((item, index) => {
       csvData.push([
         index + 1,
@@ -1677,33 +1894,43 @@ function exportAnalysisResults(itemStats) {
         item.rate.toFixed(2),
         item.count,
         item.total,
-        analysisType
+        analysisType,
       ]);
     });
-    
+
     // 转换为CSV格式
-    const csvContent = csvData.map(row => 
-      row.map(field => `"${field}"`).join(",")
-    ).join("\n");
-    
+    const csvContent = csvData
+      .map((row) => row.map((field) => `"${field}"`).join(","))
+      .join("\n");
+
     // 创建下载链接
-    const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob(["\ufeff" + csvContent], {
+      type: "text/csv;charset=utf-8;",
+    });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
-    
-    const typeNames = { cards: '卡牌', relics: '遗物', blessings: '祝福' };
-    const analysisNames = { select: '选择率', buy: '购买率', popularity: '热门度' };
-    
+
+    const typeNames = { cards: "卡牌", relics: "遗物", blessings: "祝福" };
+    const analysisNames = {
+      select: "选择率",
+      buy: "购买率",
+      popularity: "热门度",
+    };
+
     link.setAttribute("href", url);
-    link.setAttribute("download", `${typeNames[itemType]}_${analysisNames[analysisType]}_分析_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute(
+      "download",
+      `${typeNames[itemType]}_${analysisNames[analysisType]}_分析_${new Date()
+        .toISOString()
+        .slice(0, 10)}.csv`
+    );
     link.style.visibility = "hidden";
-    
+
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    
+
     console.log("✅ 分析结果导出成功");
-    
   } catch (error) {
     console.error("❌ 分析结果导出失败:", error);
     alert("导出失败: " + error.message);
@@ -1713,61 +1940,80 @@ function exportAnalysisResults(itemStats) {
 // 获取图表颜色
 function getChartColor(index) {
   const colors = [
-    '#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6',
-    '#1abc9c', '#34495e', '#e67e22', '#95a5a6', '#16a085'
+    "#3498db",
+    "#e74c3c",
+    "#2ecc71",
+    "#f39c12",
+    "#9b59b6",
+    "#1abc9c",
+    "#34495e",
+    "#e67e22",
+    "#95a5a6",
+    "#16a085",
   ];
   return colors[index % colors.length];
 }
 
-
 // 更新时间分析
 function updateTimeAnalysis() {
   console.log("=== 更新时间分析 ===");
-  
+
   const timeContent = document.getElementById("time-content");
   if (!timeContent) {
     console.error("找不到 time-content 元素");
     return;
   }
-  
+
   if (!allData || allData.length === 0) {
     timeContent.innerHTML = '<div class="no-data">暂无时间数据</div>';
     return;
   }
-  
+
   try {
     const hourlyStats = new Array(24).fill(0);
     const dailyStats = {};
     const weeklyStats = {
-      '周日': 0, '周一': 0, '周二': 0, '周三': 0, 
-      '周四': 0, '周五': 0, '周六': 0
+      周日: 0,
+      周一: 0,
+      周二: 0,
+      周三: 0,
+      周四: 0,
+      周五: 0,
+      周六: 0,
     };
-    
+
     // 统计时间数据
-    allData.forEach(record => {
+    allData.forEach((record) => {
       try {
         const date = new Date(record.create_at);
         const hour = date.getHours();
-        const dateStr = date.toLocaleDateString('zh-CN');
-        const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getDay()];
-        
+        const dateStr = date.toLocaleDateString("zh-CN");
+        const weekday = [
+          "周日",
+          "周一",
+          "周二",
+          "周三",
+          "周四",
+          "周五",
+          "周六",
+        ][date.getDay()];
+
         hourlyStats[hour]++;
         dailyStats[dateStr] = (dailyStats[dateStr] || 0) + 1;
         weeklyStats[weekday]++;
-        
       } catch (e) {
         console.warn("时间数据解析失败:", e);
       }
     });
-    
+
     // 生成HTML
     let html = '<div class="time-analysis-container">';
-    
+
     // 24小时活动分布
     html += '<div class="time-section">';
-    html += '<h3>🕐 24小时活动分布</h3>';
+    html += "<h3>🕐 24小时活动分布</h3>";
     html += '<div class="hourly-chart">';
-    
+
     const maxHourly = Math.max(...hourlyStats);
     hourlyStats.forEach((count, hour) => {
       const height = maxHourly > 0 ? (count / maxHourly) * 100 : 0;
@@ -1778,16 +2024,18 @@ function updateTimeAnalysis() {
         </div>
       `;
     });
-    
-    html += '</div>';
-    html += `<div class="chart-stats"><p>峰值时段: ${hourlyStats.indexOf(maxHourly)}:00 (${maxHourly}次)</p></div>`;
-    html += '</div>';
-    
+
+    html += "</div>";
+    html += `<div class="chart-stats"><p>峰值时段: ${hourlyStats.indexOf(
+      maxHourly
+    )}:00 (${maxHourly}次)</p></div>`;
+    html += "</div>";
+
     // 星期活动统计
     html += '<div class="time-section">';
-    html += '<h3>📅 星期活动统计</h3>';
+    html += "<h3>📅 星期活动统计</h3>";
     html += '<div class="weekly-stats">';
-    
+
     const maxWeekly = Math.max(...Object.values(weeklyStats));
     Object.entries(weeklyStats).forEach(([day, count]) => {
       const width = maxWeekly > 0 ? (count / maxWeekly) * 100 : 0;
@@ -1801,25 +2049,27 @@ function updateTimeAnalysis() {
         </div>
       `;
     });
-    
-    html += '</div></div>';
-    
+
+    html += "</div></div>";
+
     // 每日活动列表
     html += '<div class="time-section">';
-    html += '<h3>📊 每日活动统计</h3>';
+    html += "<h3>📊 每日活动统计</h3>";
     html += '<div class="daily-list">';
-    
+
     const sortedDays = Object.entries(dailyStats)
       .sort((a, b) => new Date(b[0]) - new Date(a[0]))
       .slice(0, 30); // 显示最近30天
-    
+
     const maxDaily = Math.max(...Object.values(dailyStats));
-    
+
     sortedDays.forEach(([date, count]) => {
       const width = maxDaily > 0 ? (count / maxDaily) * 100 : 0;
       const dateObj = new Date(date);
-      const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][dateObj.getDay()];
-      
+      const weekday = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][
+        dateObj.getDay()
+      ];
+
       html += `
         <div class="daily-item">
           <div class="daily-date">
@@ -1833,14 +2083,13 @@ function updateTimeAnalysis() {
         </div>
       `;
     });
-    
-    html += '</div></div>';
-    
-    html += '</div>'; // 结束 time-analysis-container
-    
+
+    html += "</div></div>";
+
+    html += "</div>"; // 结束 time-analysis-container
+
     timeContent.innerHTML = html;
     console.log("✅ 时间分析更新完成");
-    
   } catch (error) {
     console.error("时间分析更新失败:", error);
     timeContent.innerHTML = '<div class="error">时间数据加载失败</div>';
@@ -1850,7 +2099,7 @@ function updateTimeAnalysis() {
 // 格式化物品名称
 function formatItemName(itemId) {
   if (!itemId) return "未知物品";
-  
+
   return itemId;
 }
 
@@ -1883,13 +2132,13 @@ function exportData() {
     alert("没有数据可以导出");
     return;
   }
-  
+
   try {
     // 准备CSV数据
     const csvData = [];
     csvData.push(["时间", "玩家ID", "数据类型", "详细信息"]);
-    
-    allData.forEach(record => {
+
+    allData.forEach((record) => {
       try {
         let parsedData;
         if (typeof record.data === "string") {
@@ -1897,38 +2146,42 @@ function exportData() {
         } else {
           parsedData = record.data;
         }
-        
+
         const time = new Date(record.create_at).toLocaleString("zh-CN");
         const playerId = parsedData?.PlayerId || "未知";
         const dataType = "游戏选择";
         const details = JSON.stringify(parsedData);
-        
+
         csvData.push([time, playerId, dataType, details]);
       } catch (e) {
         console.warn("导出数据解析失败:", e);
       }
     });
-    
+
     // 转换为CSV格式
-    const csvContent = csvData.map(row => 
-      row.map(field => `"${field}"`).join(",")
-    ).join("\n");
-    
+    const csvContent = csvData
+      .map((row) => row.map((field) => `"${field}"`).join(","))
+      .join("\n");
+
     // 创建下载链接
-    const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob(["\ufeff" + csvContent], {
+      type: "text/csv;charset=utf-8;",
+    });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
-    
+
     link.setAttribute("href", url);
-    link.setAttribute("download", `游戏数据_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute(
+      "download",
+      `游戏数据_${new Date().toISOString().slice(0, 10)}.csv`
+    );
     link.style.visibility = "hidden";
-    
+
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    
+
     console.log("✅ 数据导出成功");
-    
   } catch (error) {
     console.error("❌ 数据导出失败:", error);
     alert("数据导出失败: " + error.message);
@@ -1952,3 +2205,57 @@ window.addEventListener("unhandledrejection", function (e) {
 });
 
 console.log("🚀 脚本加载完成");
+
+const ENC_KEY_PASSPHRASE = "魔女密钥@2024";
+
+async function getCryptoKey(passphrase) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(passphrase),
+    { name: "PBKDF2" },
+    false,
+    ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: enc.encode("固定盐值"), // 可自定义
+      iterations: 100000,
+      hash: "SHA-256",
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+async function encryptData(data, passphrase) {
+  const key = await getCryptoKey(passphrase);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(JSON.stringify(data));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    encoded
+  );
+  return {
+    iv: Array.from(iv),
+    data: btoa(String.fromCharCode(...new Uint8Array(ciphertext))),
+  };
+}
+
+async function decryptData(encrypted, passphrase) {
+  const key = await getCryptoKey(passphrase);
+  const iv = new Uint8Array(encrypted.iv);
+  const ciphertext = Uint8Array.from(atob(encrypted.data), (c) =>
+    c.charCodeAt(0)
+  );
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    ciphertext
+  );
+  return JSON.parse(new TextDecoder().decode(decrypted));
+}

@@ -2476,3 +2476,106 @@ body {
     }
   }
 }
+/* 登录容器布局 */
+.login-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  padding: 1rem;
+  background: linear-gradient(to bottom right, #1e1e2f, #2b2b45);
+}
+
+.login-box {
+  background-color: #ffffff10;
+  backdrop-filter: blur(10px);
+  padding: 2rem;
+  border-radius: 1.5rem;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+  max-width: 400px;
+  width: 100%;
+  color: #fff;
+}
+
+.login-box h1 {
+  font-size: 1.8rem;
+  margin-bottom: 0.5rem;
+  text-align: center;
+}
+
+.login-box p {
+  font-size: 0.9rem;
+  text-align: center;
+  color: #ccc;
+  margin-bottom: 1.5rem;
+}
+
+.form-group {
+  margin-bottom: 1.2rem;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-size: 0.95rem;
+  color: #eee;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  border: none;
+  border-radius: 0.6rem;
+  background-color: #2e2e3e;
+  color: #fff;
+  font-size: 1rem;
+}
+
+.form-group input:focus {
+  outline: none;
+  background-color: #3a3a50;
+}
+
+.btn {
+  width: 100%;
+  padding: 0.75rem;
+  font-size: 1rem;
+  border: none;
+  border-radius: 0.6rem;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.btn-primary {
+  background-color: #5b73e8;
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background-color: #4d64cc;
+}
+
+/* 错误提示 */
+#login-error {
+  color: #ff6b6b;
+  background-color: #3e2e2e;
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+  margin-bottom: 1rem;
+  display: none;
+}
+
+/* 响应式支持 */
+@media (max-width: 480px) {
+  .login-box {
+    padding: 1.5rem;
+  }
+
+  .login-box h1 {
+    font-size: 1.5rem;
+  }
+
+  .form-group input {
+    font-size: 0.95rem;
+  }
+}
