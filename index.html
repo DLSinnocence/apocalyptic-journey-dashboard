@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>《魔女：终末旅途》游戏数据分析仪表板</title>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- 头部 -->
+        <div class="header">
+            <h1>🎮 游戏数据分析仪表板</h1>
+            <div class="header-controls">
+                <button id="refreshBtn" class="btn btn-primary">🔄 刷新数据</button>
+                <button onclick="exportData()" class="btn btn-success">📊 导出数据</button>
+            </div>
+        </div>
+
+        <!-- 加载状态 -->
+        <div id="loading" class="loading">
+            <div class="loading-spinner"></div>
+            <span>正在加载数据...</span>
+        </div>
+
+        <!-- 错误信息 -->
+        <div id="error" class="error"></div>
+
+        <!-- 统计卡片 -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>总记录数</h3>
+                <div class="stat-value" id="totalRecords">0</div>
+                <div class="stat-label">条记录</div>
+            </div>
+            <div class="stat-card">
+                <h3>活跃玩家</h3>
+                <div class="stat-value" id="activePlayers">0</div>
+                <div class="stat-label">位玩家</div>
+            </div>
+            <div class="stat-card">
+                <h3>最后更新</h3>
+                <div class="stat-value" style="font-size: 16px;" id="lastUpdate">无数据</div>
+                <div class="stat-label">更新时间</div>
+            </div>
+        </div>
+
+        <!-- 主要内容 -->
+        <div class="main-content">
+            <div class="tabs">
+                <!-- 标签页按钮 -->
+                <div class="tab-buttons">
+                    <button class="tab-btn active" data-tab="overview">📊 概览</button>
+                    <button class="tab-btn" data-tab="players">👥 玩家</button>
+                    <button class="tab-btn" data-tab="cards">🃏 卡牌分析</button>
+                    <button class="tab-btn" data-tab="time">⏰ 时间分析</button>
+                </div>
+
+                <!-- 标签页内容 -->
+                <div id="overview" class="tab-pane active">
+                    <div id="overview-content">
+                        <div class="no-data">正在加载概览数据...</div>
+                    </div>
+                </div>
+
+                <div id="players" class="tab-pane">
+                    <div id="players-content">
+                        <div class="no-data">正在加载玩家数据...</div>
+                    </div>
+                </div>
+
+                <div id="cards" class="tab-pane">
+                    <div id="cards-content">
+                        <div class="no-data">正在加载卡牌数据...</div>
+                    </div>
+                </div>
+
+                <div id="time" class="tab-pane">
+                    <div id="time-content">
+                        <div class="no-data">正在加载时间数据...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="env.js"></script>
+    <script src="config.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+env.js
+
+# 其他常见忽略文件
+.DS_Store
+*.log
+node_modules/
+.env
+.env.local
+.env.production
