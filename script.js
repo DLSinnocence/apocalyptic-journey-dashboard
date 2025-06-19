@@ -1,4 +1,6 @@
 const TABLE_NAME = "save_selection";
+const BASE_URL = "https://swtxytbwwwaacdvubkgy.supabase.co";
+const API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN3dHh5dGJ3d3dhYWNkdnVia2d5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAwODU1MjUsImV4cCI6MjA2NTY2MTUyNX0.ja59qjtcnOb2KEOVM-KeWDZ1KfQr2J1eld2VX8mvSWc";
 
 // 全局变量
 let allData = [];
@@ -24,7 +26,7 @@ function initializeApp() {
 document.addEventListener('DOMContentLoaded', initializeApp);
 
 // 初始化 Supabase 客户端
-const supabase = window.supabase.createClient(window.AppConfig.API.BASE_URL, window.AppConfig.API.API_KEY);
+const supabase = window.supabase.createClient(BASE_URL, API_KEY);
 
 // 初始化应用
 document.addEventListener("DOMContentLoaded", function () {
@@ -92,7 +94,6 @@ async function loadData() {
   
   try {
     console.log("连接到 Supabase...");
-    console.log("URL:", SUPABASE_URL);
     console.log("表名:", TABLE_NAME);
     
     // 获取数据
