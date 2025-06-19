@@ -67,6 +67,7 @@ function showLoginError(message) {
   if (errorEl) {
     errorEl.textContent = message;
     errorEl.classList.remove("hidden");
+    errorEl.style.display = "block"; // 强制显示
   }
 }
 
