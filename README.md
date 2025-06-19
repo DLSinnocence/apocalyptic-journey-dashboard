@@ -44,12 +44,13 @@ const TABLE_NAME = "save_selection";
 
 上传到静态托管平台（如 GitHub Pages、Netlify、Vercel）
 
-🔒 安全提示
+## 🔒 安全提示
 所有敏感数据必须由 Supabase 端控制访问，建议启用 RLS（行级安全）；
 
 前端已实现本地缓存与加密机制，提升加载性能与数据安全；
 
 本项目使用 Supabase Auth 验证登录，避免前端绕过访问。
 
-📃 许可证
+## 📃 许可证
+
 本项目使用 MIT License。
