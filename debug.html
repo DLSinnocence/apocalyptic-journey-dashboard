@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据获取调试</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .debug-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        .info { background-color: #d1ecf1; border-color: #bee5eb; }
+        .warning { background-color: #fff3cd; border-color: #ffeaa7; }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #0056b3; }
+        pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .config-input {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 数据获取调试工具</h1>
+        
+        <div class="debug-section">
+            <h3>配置信息</h3>
+            <input type="url" id="supabaseUrl" class="config-input" placeholder="Supabase URL">
+            <input type="text" id="supabaseKey" class="config-input" placeholder="Supabase Anon Key">
+            <input type="text" id="tableName" class="config-input" placeholder="表名">
+            <button onclick="startDebug()">开始调试</button>
+        </div>
+        
+        <div id="debugResults"></div>
+    </div>
+
+    <script>
+        let supabase;
+        
+        async function startDebug() {
+            const url = document.getElementById('supabaseUrl').value;
+            const key = document.getElementById('supabaseKey').value;
+            const tableName = document.getElementById('tableName').value;
+            
+            if (!url || !key || !tableName) {
+                addDebugResult('error', '请填写所有配置信息');
+                return;
+            }
+            
+            clearResults();
+            
+            try {
+                // 1. 初始化客户端
+                addDebugResult('info', '🔧 初始化 Supabase 客户端...');
+                supabase = window.supabase.createClient(url, key);
+                addDebugResult('success', '✅ 客户端初始化成功');
+                
+                // 2. 测试连接
+                addDebugResult('info', '🔗 测试连接...');
+                const { data: authData, error: authError } = await supabase.auth.getSession();
+                addDebugResult('success', '✅ 连接测试成功');
+                
+                // 3. 检查表是否存在
+                addDebugResult('info', `📋 检查表 "${tableName}" 是否存在...`);
+                const { error: tableError } = await supabase
+                    .from(tableName)
+                    .select('id')
+                    .limit(0);
+                
+                if (tableError) {
+                    addDebugResult('error', `❌ 表访问失败: ${tableError.message}`);
+                    
+                    if (tableError.message.includes('does not exist')) {
+                        addDebugResult('warning', '💡 表不存在，请检查表名是否正确');
+                    } else if (tableError.message.includes('permission')) {
+                        addDebugResult('warning', '💡 权限问题，可能是 RLS 策略限制');
+                    }
+                    return;
+                }
+                addDebugResult('success', '✅ 表存在且可访问');
+                
+                // 4. 获取记录总数
+                addDebugResult('info', '📊 获取记录总数...');
+                const { count, error: countError } = await supabase
+                    .from(tableName)
+                    .select('*', { count: 'exact', head: true });
+                
+                if (countError) {
+                    addDebugResult('error', `❌ 获取记录数失败: ${countError.message}`);
+                    return;
+                }
+                
+                addDebugResult('success', `✅ 表中共有 ${count} 条记录`);
+                
+                if (count === 0) {
+                    addDebugResult('warning', '⚠️ 表中没有数据');
+                    return;
+                }
+                
+                // 5. 尝试获取数据
+                addDebugResult('info', '📥 尝试获取数据...');
+                const { data, error } = await supabase
+                    .from(tableName)
+                    .select('*')
+                    .limit(5);
+                
+                if (error) {
+                    addDebugResult('error', `❌ 数据获取失败: ${error.message}`);
+                    
+                    // RLS 相关错误提示
+                    if (error.message.includes('RLS') || error.message.includes('policy')) {
+                        addDebugResult('warning', `
+                            💡 这可能是 RLS (行级安全) 策略问题。解决方案：
+                            <br>1. 在 Supabase 控制台禁用表的 RLS
+                            <br>2. 或创建允许匿名访问的策略：
+                            <pre>CREATE POLICY "Allow anonymous read" ON ${tableName} FOR SELECT USING (true);</pre>
+                        `);
+                    }
+                    return;
+                }
+                
+                addDebugResult('success', `✅ 成功获取 ${data.length} 条记录`);
+                
+                // 6. 检查数据结构
+                if (data.length > 0) {
+                    addDebugResult('info', '🔍 检查数据结构...');
+                    const firstRecord = data[0];
+                    const fields = Object.keys(firstRecord);
+                    
+                    addDebugResult('info', `字段列表: ${fields.join(', ')}`);
+                    
+                    // 检查必需字段
+                    const requiredFields = ['id', 'data', 'create_at'];
+                    const missingFields = requiredFields.filter(field => !fields.includes(field));
+                    
+                    if (missingFields.length === 0) {
+                        addDebugResult('success', '✅ 所有必需字段都存在');
+                    } else {
+                        addDebugResult('error', `❌ 缺少必需字段: ${missingFields.join(', ')}`);
+                    }
+                    
+                    // 显示第一条记录
+                    addDebugResult('info', '📋 第一条记录:');
+                    document.getElementById('debugResults').innerHTML += 
+                        `<pre>${JSON.stringify(firstRecord, null, 2)}</pre>`;
+                    
+                    // 检查 data 字段
+                    if (firstRecord.data) {
+                        try {
+                            const parsedData = typeof firstRecord.data === 'string' ? 
+                                JSON.parse(firstRecord.data) : firstRecord.data;
+                            
+                            addDebugResult('success', '✅ data 字段 JSON 格式正确');
+                            
+                            if (parsedData.PlayerId) {
+                                addDebugResult('success', `✅ 找到 PlayerId: ${parsedData.PlayerId}`);
+                            } else {
+                                addDebugResult('warning', '⚠️ data 中缺少 PlayerId 字段');
+                            }
+                            
+                            if (parsedData.Cards) {
+                                addDebugResult('success', '✅ 找到 Cards 数据');
+                            } else {
+                                addDebugResult('warning', '⚠️ data 中缺少 Cards 字段');
+                            }
+                            
+                        } catch (e) {
+                            addDebugResult('error', `❌ data 字段 JSON 解析失败: ${e.message}`);
+                        }
+                    } else {
+                        addDebugResult('error', '❌ data 字段为空');
+                    }
+                }
+                
+                addDebugResult('success', '🎉 调试完成！如果所有检查都通过，数据应该可以正常加载。');
+                
+            } catch (error) {
+                addDebugResult('error', `❌ 调试过程中出现错误: ${error.message}`);
+                console.error('Debug error:', error);
+            }
+        }
+        
+        function addDebugResult(type, message) {
+            const results = document.getElementById('debugResults');
+            const div = document.createElement('div');
+            div.className = `debug-section ${type}`;
+            div.innerHTML = `<strong>${getTypeIcon(type)}</strong> ${message}`;
+            results.appendChild(div);
+        }
+        
+        function getTypeIcon(type) {
+            const icons = {
+                success: '✅',
+                error: '❌',
+                warning: '⚠️',
+                info: 'ℹ️'
+            };
+            return icons[type] || 'ℹ️';
+        }
+        
+        function clearResults() {
+            document.getElementById('debugResults').innerHTML = '';
+        }
+    </script>
+</body>
+</html>
