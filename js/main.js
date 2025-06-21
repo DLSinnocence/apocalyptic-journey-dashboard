@@ -1,10 +1,6 @@
-import { BASE_URL, API_KEY } from './config.js';
-import { initAuthStateListener, setupAuthForms, showAppContent, showLoginForm } from './auth.js';
+import { initAuthStateListener, setupAuthForms} from './auth.js';
 import { loadData } from './data.js';
 import { initTabs } from './ui.js';
-
-// 初始化 Supabase 客户端
-const supabase = window.supabase.createClient(BASE_URL, API_KEY);
 
 // 页面加载完成后初始化
 document.addEventListener("DOMContentLoaded", function() {

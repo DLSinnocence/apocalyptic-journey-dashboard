@@ -12,3 +12,6 @@ export let currentUser = null;
 
 // DOM 元素引用
 export let refreshBtn, loadingDiv, errorDiv;
+
+// 初始化 Supabase 客户端
+export let supabase = window.supabase.createClient(BASE_URL, API_KEY);
