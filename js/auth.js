@@ -58,16 +58,11 @@ export function setupAuthForms() {
 }
 
 // 显示登录错误
-export function showLoginError(message) {
+function showLoginError(message) {
   const errorEl = document.getElementById("login-error");
   if (errorEl) {
     errorEl.textContent = message;
     errorEl.classList.remove("hidden");
     errorEl.style.display = "block"; // 强制显示
   }
-}
-
-// 获取当前用户
-export function getCurrentUser() {
-  return currentUser;
 }
