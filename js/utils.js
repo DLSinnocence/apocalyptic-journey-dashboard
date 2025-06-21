@@ -1,4 +1,4 @@
-async function encryptData(data, passphrase) {
+export async function encryptData(data, passphrase) {
   const key = await getCryptoKey(passphrase);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encoded = new TextEncoder().encode(JSON.stringify(data));
@@ -13,7 +13,7 @@ async function encryptData(data, passphrase) {
   };
 }
 
-async function decryptData(encrypted, passphrase) {
+export async function decryptData(encrypted, passphrase) {
   const key = await getCryptoKey(passphrase);
   const iv = new Uint8Array(encrypted.iv);
   const ciphertext = Uint8Array.from(atob(encrypted.data), (c) =>
