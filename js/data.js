@@ -1,6 +1,6 @@
-import { supabase, TABLE_NAME, ENC_KEY_PASSPHRASE, allData } from './js/config.js';
-import { updateUI } from './js/ui.js';
-import { showLoading, hideError, showError } from './js/utils.js';
+import { supabase, TABLE_NAME, ENC_KEY_PASSPHRASE, allData } from './config.js';
+import { updateUI } from './ui.js';
+import { showLoading, hideError, showError } from './utils.js';
 
 // 加载数据
 export async function loadData(forceRefresh = false) {

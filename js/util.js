@@ -1,5 +1,3 @@
-import { allData } from './js/config.js';
-
 // 格式化物品名称
 export function formatItemName(itemId) {
   if (!itemId) return "未知物品";

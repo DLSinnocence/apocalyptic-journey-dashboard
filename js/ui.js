@@ -1,5 +1,5 @@
-import { allData } from './js/config.js';
-import { formatItemName } from './js/utils.js';
+import { allData } from './config.js';
+import { formatItemName } from './utils.js';
 
 // 更新UI
 export function updateUI() {
