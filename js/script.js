@@ -1,75 +1,17 @@
-const TABLE_NAME = "save_selection";
-const BASE_URL = "https://swtxytbwwwaacdvubkgy.supabase.co";
-const API_KEY ="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN3dHh5dGJ3d3dhYWNkdnVia2d5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAwODU1MjUsImV4cCI6MjA2NTY2MTUyNX0.ja59qjtcnOb2KEOVM-KeWDZ1KfQr2J1eld2VX8mvSWc";
+import { encryptData, decryptData } from "./utils.js";
+import { supabase, TABLE_NAME, ENC_KEY_PASSPHRASE } from "./config.js";
+import { 
+  initAuthStateListener, 
+  setupAuthForms, 
+  showLoginError,
+  getCurrentUser
+} from "./auth.js";
 
 // 全局变量
 let allData = [];
 
 // DOM 元素
 let refreshBtn, loadingDiv, errorDiv;
-
-// 在script.js中使用配置
-function initializeApp() {}
-let currentUser = null;
-
-// 初始化认证状态监听器
-function initAuthStateListener() {
-  supabase.auth.onAuthStateChange((event, session) => {
-    if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
-      // 用户已登录
-      currentUser = session.user;
-      console.log("用户已登录:", currentUser.email);
-      showAppContent();
-    } else if (event === "SIGNED_OUT") {
-      // 用户已登出
-      currentUser = null;
-      console.log("用户已登出");
-      showLoginForm();
-    }
-  });
-}
-
-// 设置登录表单事件
-function setupAuthForms() {
-  const loginForm = document.getElementById("login-form");
-  const logoutBtn = document.getElementById("logoutBtn");
-
-  // 登录表单提交
-  if (loginForm) {
-    loginForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const email = document.getElementById("email").value;
-      const password = document.getElementById("password").value;
-
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        showLoginError("登录失败: " + error.message);
-      }
-    });
-  }
-
-  // 登出按钮
-  if (logoutBtn) {
-    logoutBtn.addEventListener("click", async () => {
-      const { error } = await supabase.auth.signOut();
-      if (error) console.error("登出失败:", error);
-    });
-  }
-}
-
-// 显示登录错误
-function showLoginError(message) {
-  const errorEl = document.getElementById("login-error");
-  if (errorEl) {
-    errorEl.textContent = message;
-    errorEl.classList.remove("hidden");
-    errorEl.style.display = "block"; // 强制显示
-  }
-}
 
 // 显示应用内容
 function showAppContent() {
@@ -97,12 +39,6 @@ function showLoginForm() {
   }
 }
 
-// 初始化 Supabase 客户端
-const supabase = window.supabase.createClient(BASE_URL, API_KEY);
-
-// 页面加载完成后初始化
-document.addEventListener("DOMContentLoaded", initializeApp);
-
 // 初始化应用
 document.addEventListener("DOMContentLoaded", function () {
   console.log("DOM 加载完成，开始初始化...");
@@ -111,8 +47,16 @@ document.addEventListener("DOMContentLoaded", function () {
   refreshBtn = document.getElementById("refreshBtn");
   loadingDiv = document.getElementById("loading");
   errorDiv = document.getElementById("error");
+  
   // 初始化Supabase认证状态监听器
-  initAuthStateListener();
+  initAuthStateListener((isLoggedIn) => {
+    if (isLoggedIn) {
+      showAppContent();
+    } else {
+      showLoginForm();
+    }
+  });
+  
   // 设置登录表单事件
   setupAuthForms();
 
@@ -127,6 +71,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // 加载数据
   loadData();
 });
+
 
 // 标签页功能
 function initTabs() {
@@ -2230,33 +2175,4 @@ async function getCryptoKey(passphrase) {
     false,
     ["encrypt", "decrypt"]
   );
-}
-
-async function encryptData(data, passphrase) {
-  const key = await getCryptoKey(passphrase);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encoded = new TextEncoder().encode(JSON.stringify(data));
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    key,
-    encoded
-  );
-  return {
-    iv: Array.from(iv),
-    data: btoa(String.fromCharCode(...new Uint8Array(ciphertext))),
-  };
-}
-
-async function decryptData(encrypted, passphrase) {
-  const key = await getCryptoKey(passphrase);
-  const iv = new Uint8Array(encrypted.iv);
-  const ciphertext = Uint8Array.from(atob(encrypted.data), (c) =>
-    c.charCodeAt(0)
-  );
-  const decrypted = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
-    key,
-    ciphertext
-  );
-  return JSON.parse(new TextDecoder().decode(decrypted));
 }
