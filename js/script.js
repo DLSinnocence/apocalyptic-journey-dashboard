@@ -63,9 +63,14 @@ document.addEventListener("DOMContentLoaded", function () {
   // 初始化标签页
   initTabs();
 
-  // 加载数据
-  loadData();
+  // 检查当前会话
+  supabase.auth.getSession().then(({ data: { session } }) => {
+    if (session) {
+      showAppContent();
+    }
+  });
 });
+
 
 
 // 标签页功能
