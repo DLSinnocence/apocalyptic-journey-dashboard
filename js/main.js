@@ -1,7 +1,7 @@
-import { BASE_URL, API_KEY } from './js/config.js';
-import { initAuthStateListener, setupAuthForms, showAppContent, showLoginForm } from './js/auth.js';
-import { loadData } from './js/data.js';
-import { initTabs } from './js/ui.js';
+import { BASE_URL, API_KEY } from './config.js';
+import { initAuthStateListener, setupAuthForms, showAppContent, showLoginForm } from './auth.js';
+import { loadData } from './data.js';
+import { initTabs } from './ui.js';
 
 // 初始化 Supabase 客户端
 const supabase = window.supabase.createClient(BASE_URL, API_KEY);

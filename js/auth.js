@@ -1,4 +1,4 @@
-import { supabase, currentUser } from './js/config.js';
+import { supabase, currentUser } from './config.js';
 
 // 初始化认证状态监听器
 export function initAuthStateListener() {
