@@ -1,16 +1,20 @@
-import { supabase, currentUser } from './config.js';
+import { supabase } from "./config.js";
+
+let currentUser = null;
 
 // 初始化认证状态监听器
 export function initAuthStateListener() {
   supabase.auth.onAuthStateChange((event, session) => {
     if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+      // 用户已登录
       currentUser = session.user;
       console.log("用户已登录:", currentUser.email);
-      showAppContent();
+      return true; // 表示用户已登录
     } else if (event === "SIGNED_OUT") {
+      // 用户已登出
       currentUser = null;
       console.log("用户已登出");
-      showLoginForm();
+      return false; // 表示用户已登出
     }
   });
 }
@@ -20,6 +24,7 @@ export function setupAuthForms() {
   const loginForm = document.getElementById("login-form");
   const logoutBtn = document.getElementById("logoutBtn");
 
+  // 登录表单提交
   if (loginForm) {
     loginForm.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -33,14 +38,21 @@ export function setupAuthForms() {
 
       if (error) {
         showLoginError("登录失败: " + error.message);
+        return false;
       }
+      return true;
     });
   }
 
+  // 登出按钮
   if (logoutBtn) {
     logoutBtn.addEventListener("click", async () => {
       const { error } = await supabase.auth.signOut();
-      if (error) console.error("登出失败:", error);
+      if (error) {
+        console.error("登出失败:", error);
+        return false;
+      }
+      return true;
     });
   }
 }
@@ -51,25 +63,11 @@ export function showLoginError(message) {
   if (errorEl) {
     errorEl.textContent = message;
     errorEl.classList.remove("hidden");
-    errorEl.style.display = "block";
+    errorEl.style.display = "block"; // 强制显示
   }
 }
 
-// 显示应用内容
-export function showAppContent() {
-  document.getElementById("login-container").classList.add("hidden");
-  document.getElementById("app-container").classList.remove("hidden");
-  initTabs();
-  loadData();
-}
-
-// 显示登录表单
-export function showLoginForm() {
-  document.getElementById("login-container").classList.remove("hidden");
-  document.getElementById("app-container").classList.add("hidden");
-  
-  const errorEl = document.getElementById("login-error");
-  if (errorEl) {
-    errorEl.classList.add("hidden");
-  }
+// 获取当前用户
+export function getCurrentUser() {
+  return currentUser;
 }
