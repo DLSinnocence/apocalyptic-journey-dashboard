@@ -1,4 +1,4 @@
-import { BASE_URL, API_KEY, supabase } from './js/config.js';
+import { BASE_URL, API_KEY } from './js/config.js';
 import { initAuthStateListener, setupAuthForms, showAppContent, showLoginForm } from './js/auth.js';
 import { loadData } from './js/data.js';
 import { initTabs } from './js/ui.js';
