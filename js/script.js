@@ -139,7 +139,7 @@ async function loadData(forceRefresh = false) {
     const { data, error } = await supabase
       .from(TABLE_NAME)
       .select("*")
-      .order("create_at", { ascending: false })
+      .order("created_at", { ascending: false })
       .limit(1000);
 
     if (error) throw new Error(`数据获取失败: ${error.message}`);
@@ -227,9 +227,9 @@ function updateStats() {
 
     // 获取最后更新时间
     let lastUpdate = "无数据";
-    if (allData.length > 0 && allData[0].create_at) {
+    if (allData.length > 0 && allData[0].created_at) {
       try {
-        lastUpdate = new Date(allData[0].create_at).toLocaleString("zh-CN");
+        lastUpdate = new Date(allData[0].created_at).toLocaleString("zh-CN");
       } catch (e) {
         lastUpdate = "时间格式错误";
       }
@@ -355,7 +355,7 @@ function updateOverview() {
     const recentRecords = allData.slice(0, 10);
     recentRecords.forEach((record) => {
       try {
-        const time = new Date(record.create_at).toLocaleString("zh-CN");
+        const time = new Date(record.created_at).toLocaleString("zh-CN");
         let parsedData;
         if (typeof record.data === "string") {
           parsedData = JSON.parse(record.data);
@@ -420,16 +420,16 @@ function updatePlayerList() {
           if (!playerStats[playerId]) {
             playerStats[playerId] = {
               count: 0,
-              lastSeen: record.create_at,
+              lastSeen: record.created_at,
             };
           }
           playerStats[playerId].count++;
 
           if (
-            new Date(record.create_at) >
+            new Date(record.created_at) >
             new Date(playerStats[playerId].lastSeen)
           ) {
-            playerStats[playerId].lastSeen = record.create_at;
+            playerStats[playerId].lastSeen = record.created_at;
           }
         }
       } catch (e) {
@@ -496,6 +496,7 @@ function updateCardAnalysis() {
       cards: { show: {}, select: {}, buy: {} },
       relics: { show: {}, select: {}, buy: {} },
       blessings: { show: {}, select: {}, buy: {} },
+      hardTags: { show: {}, select: {}, buy: {} },
     };
 
     // 处理数据
@@ -526,6 +527,11 @@ function updateCardAnalysis() {
               itemStats.blessings,
               "Blessings"
             );
+          }
+
+          if (parsedData.HardTags)
+          {
+            processItemData(parsedData.HardTags, itemStats.hardTags, "HardTags");
           }
         }
       } catch (e) {
@@ -1931,7 +1937,7 @@ function updateTimeAnalysis() {
     // 统计时间数据
     allData.forEach((record) => {
       try {
-        const date = new Date(record.create_at);
+        const date = new Date(record.created_at);
         const hour = date.getHours();
         const dateStr = date.toLocaleDateString("zh-CN");
         const weekday = [
@@ -2093,7 +2099,7 @@ function exportData() {
           parsedData = record.data;
         }
 
-        const time = new Date(record.create_at).toLocaleString("zh-CN");
+        const time = new Date(record.created_at).toLocaleString("zh-CN");
         const playerId = parsedData?.PlayerId || "未知";
         const dataType = "游戏选择";
         const details = JSON.stringify(parsedData);
