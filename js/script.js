@@ -297,7 +297,7 @@ function updateOverview() {
           }
 
           // 统计各种选择
-          ["Cards", "Relics", "Blessings"].forEach((category) => {
+          ["Cards", "Relics", "Blessings", "HardTags"].forEach((category) => {
             if (parsedData[category] && parsedData[category].Select) {
               parsedData[category].Select.forEach((item) => {
                 const itemId = item.Id || item;
@@ -621,6 +621,7 @@ function generateAnalysisHTML(itemStats) {
             <option value="cards">🃏 卡牌</option>
             <option value="relics">🏺 遗物</option>
             <option value="blessings">✨ 祝福</option>
+            <option value="hardTags">🛠️ 难度标签</option>
           </select>
         </div>
         
@@ -855,6 +856,7 @@ function displayAnalysisResults(results, itemType, analysisType) {
     cards: "🃏 卡牌",
     relics: "🏺 遗物",
     blessings: "✨ 祝福",
+    hardTags: "🛠️ 难度标签",
   };
 
   const analysisNames = {
@@ -1136,7 +1138,7 @@ function loadItemDetailData(itemId, itemName) {
             foundInBuy = false;
 
           // 检查各种数据结构
-          ["Cards", "Relics", "Blessings"].forEach((itemType) => {
+          ["Cards", "Relics", "Blessings", "HardTags"].forEach((itemType) => {
             if (parsedData[itemType]) {
               const itemData = parsedData[itemType];
 
@@ -1862,7 +1864,7 @@ function exportAnalysisResults(itemStats) {
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
 
-    const typeNames = { cards: "卡牌", relics: "遗物", blessings: "祝福" };
+    const typeNames = { cards: "卡牌", relics: "遗物", blessings: "祝福", hardTags: "难度标签" };
     const analysisNames = {
       select: "选择率",
       buy: "购买率",
