@@ -300,7 +300,7 @@ function updateOverview() {
           ["Cards", "Relics", "Blessings", "HardTags"].forEach((category) => {
             if (parsedData[category] && parsedData[category].Select) {
               parsedData[category].Select.forEach((item) => {
-                const itemId = item.Id || item;
+                const itemId = item.Name || item;
                 itemCounts[itemId] = (itemCounts[itemId] || 0) + 1;
                 totalSelections++;
               });
@@ -558,7 +558,7 @@ function processItemData(itemData, stats, itemType) {
     // 如果是数组格式，直接统计为选择
     itemData.forEach((item) => {
       const itemId =
-        typeof item === "object" ? item.Id || item.id || item : item;
+        typeof item === "object" ? item.Name || item : item;
       if (itemId) {
         stats.select[itemId] = (stats.select[itemId] || 0) + 1;
       }
@@ -571,7 +571,7 @@ function processItemData(itemData, stats, itemType) {
       if (itemData[showType] && Array.isArray(itemData[showType])) {
         itemData[showType].forEach((item) => {
           const itemId =
-            typeof item === "object" ? item.Id || item.id || item : item;
+            typeof item === "object" ? item.Name || item : item;
           if (itemId) {
             stats.show[itemId] = (stats.show[itemId] || 0) + 1;
           }
@@ -584,7 +584,7 @@ function processItemData(itemData, stats, itemType) {
       if (itemData[selectType] && Array.isArray(itemData[selectType])) {
         itemData[selectType].forEach((item) => {
           const itemId =
-            typeof item === "object" ? item.Id || item.id || item : item;
+            typeof item === "object" ? item.Name || item : item;
           if (itemId) {
             stats.select[itemId] = (stats.select[itemId] || 0) + 1;
           }
@@ -597,7 +597,7 @@ function processItemData(itemData, stats, itemType) {
       if (itemData[buyType] && Array.isArray(itemData[buyType])) {
         itemData[buyType].forEach((item) => {
           const itemId =
-            typeof item === "object" ? item.Id || item.id || item : item;
+            typeof item === "object" ? item.Name || item : item;
           if (itemId) {
             stats.buy[itemId] = (stats.buy[itemId] || 0) + 1;
           }
@@ -1146,7 +1146,7 @@ function loadItemDetailData(itemId, itemName) {
                   itemData[showType].forEach((item) => {
                     const currentItemId =
                       typeof item === "object"
-                        ? item.Id || item.id || item
+                        ? item.Name || item
                         : item;
                     if (currentItemId === itemId) {
                       foundInShow = true;
@@ -1166,7 +1166,7 @@ function loadItemDetailData(itemId, itemName) {
                   itemData[selectType].forEach((item) => {
                     const currentItemId =
                       typeof item === "object"
-                        ? item.Id || item.id || item
+                        ? item.Name || item
                         : item;
                     if (currentItemId === itemId) {
                       foundInSelect = true;
@@ -1183,7 +1183,7 @@ function loadItemDetailData(itemId, itemName) {
                   itemData[buyType].forEach((item) => {
                     const currentItemId =
                       typeof item === "object"
-                        ? item.Id || item.id || item
+                        ? item.Name || item
                         : item;
                     if (currentItemId === itemId) {
                       foundInBuy = true;
@@ -1199,7 +1199,7 @@ function loadItemDetailData(itemId, itemName) {
                 itemData.forEach((item) => {
                   const currentItemId =
                     typeof item === "object"
-                      ? item.Id || item.id || item
+                      ? item.Name || item
                       : item;
                   if (currentItemId === itemId) {
                     foundInSelect = true;
@@ -1829,7 +1829,6 @@ function exportAnalysisResults(itemStats) {
     const csvData = [];
     const headers = [
       "排名",
-      "物品ID",
       "物品名称",
       "数值",
       "计数",
@@ -1841,7 +1840,6 @@ function exportAnalysisResults(itemStats) {
     results.forEach((item, index) => {
       csvData.push([
         index + 1,
-        item.id,
         item.name,
         item.rate.toFixed(2),
         item.count,
