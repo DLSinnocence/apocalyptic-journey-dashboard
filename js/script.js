@@ -2050,7 +2050,7 @@ function updateTimeAnalysis() {
 
 // 格式化物品名称
 function formatItemName(itemId) {
-  debugger.log("格式化物品名称:", itemId);
+  console.log("格式化物品名称:", itemId);
   if (!itemId) return "未知物品";
   
   // 如果是对象，尝试获取其字符串表示
