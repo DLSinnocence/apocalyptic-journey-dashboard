@@ -496,6 +496,7 @@ function updateCardAnalysis() {
       cards: { show: {}, select: {}, buy: {} },
       relics: { show: {}, select: {}, buy: {} },
       blessings: { show: {}, select: {}, buy: {} },
+      hardTags: { show: {}, select: {}, buy: {} },
     };
 
     // 处理数据
@@ -526,6 +527,9 @@ function updateCardAnalysis() {
               itemStats.blessings,
               "Blessings"
             );
+          }
+          if (parsedData.HardTags) {
+            processItemData(parsedData.HardTags, itemStats.hardTags, "HardTags");
           }
         }
       } catch (e) {
