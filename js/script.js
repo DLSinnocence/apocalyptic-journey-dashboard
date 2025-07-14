@@ -872,7 +872,7 @@ function displayAnalysisResults(results, itemType, analysisType) {
   }
 
   if (resultsRange) {
-    const displayCount = Math.min(results.length, 20);
+    const displayCount = results.length;
     resultsRange.textContent = `显示前 ${displayCount} 项`;
   }
 
@@ -883,7 +883,7 @@ function displayAnalysisResults(results, itemType, analysisType) {
 
   // 生成表格
   if (analysisTable) {
-    analysisTable.innerHTML = generateTable(results.slice(0, 20), analysisType);
+    analysisTable.innerHTML = generateTable(results.slice(0, results.length), analysisType);
   }
 }
 
@@ -1127,7 +1127,7 @@ function loadItemDetailData(itemId, itemName) {
         if (parsedData) {
           // 获取层数信息
           const layer =
-            parsedData.Layer || parsedData.level || parsedData.floor || 1;
+            parsedData.Level || parsedData.level || parsedData.floor || 1;
           const normalizedLayer = Math.min(Math.max(parseInt(layer), 1), 30);
 
           // 检查是否包含目标物品
@@ -1267,6 +1267,12 @@ function displayItemDetail(data) {
   if (loadingEl) loadingEl.style.display = "none";
   if (contentEl) contentEl.style.display = "block";
 
+   console.log("找到的元素:", { 
+    loadingEl, 
+    contentEl,
+    loadingElExists: !!loadingEl,
+    contentElExists: !!contentEl
+  });
   // 填充基本信息
   const basicInfoEl = document.getElementById("itemBasicInfo");
   if (basicInfoEl) {
@@ -1583,14 +1589,22 @@ function showItemDetailError(message) {
 
 // 关闭物品详情
 function closeItemDetail() {
-  const modal = document.querySelector(".item-detail-modal");
-  if (modal) {
-    modal.classList.remove("show");
-    setTimeout(() => {
-      document.body.removeChild(modal);
-    }, 300);
+  try {
+    const modal = document.querySelector(".item-detail-modal");
+    if (modal) {
+      modal.classList.remove("show");
+      setTimeout(() => {
+        // 添加安全检查
+        if (modal && modal.parentNode && document.body.contains(modal)) {
+          document.body.removeChild(modal);
+        }
+      }, 300);
+    }
+  } catch (error) {
+    console.error("关闭模态框时出错:", error);
   }
 }
+
 
 // 导出物品详情
 function exportItemDetail(itemId, itemName) {
@@ -2157,7 +2171,7 @@ function exportData() {
 // 全局导出函数
 window.exportData = exportData;
 window.loadData = loadData;
-
+window.closeItemDetail = closeItemDetail;
 // 错误处理
 window.addEventListener("error", function (e) {
   console.error("全局错误:", e.error);
