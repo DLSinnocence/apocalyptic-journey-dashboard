@@ -2050,10 +2050,26 @@ function updateTimeAnalysis() {
 
 // 格式化物品名称
 function formatItemName(itemId) {
+  debugger.log("格式化物品名称:", itemId);
   if (!itemId) return "未知物品";
-
-  return itemId;
+  
+  // 如果是对象，尝试获取其字符串表示
+  if (typeof itemId === 'object') {
+    if (itemId.toString && itemId.toString() !== '[object Object]') {
+      return itemId.toString();
+    }
+    // 如果是对象但没有有效的toString，尝试JSON.stringify
+    try {
+      return JSON.stringify(itemId);
+    } catch (e) {
+      return "未知物品";
+    }
+  }
+  
+  // 确保返回字符串
+  return String(itemId);
 }
+
 
 // 显示加载状态
 function showLoading(show) {
