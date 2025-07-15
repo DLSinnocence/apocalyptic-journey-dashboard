@@ -1125,15 +1125,11 @@ function loadItemDetailData(itemId, itemName) {
         }
 
         if (parsedData) {
-          // 获取层数信息
-          const layer =
-            parsedData.Level || parsedData.level || parsedData.floor || 1;
-          const normalizedLayer = Math.min(Math.max(parseInt(layer), 1), 30);
-
           // 检查是否包含目标物品
           let foundInShow = false,
             foundInSelect = false,
             foundInBuy = false;
+          let currentLayer = 1; // 默认层数
 
           // 检查各种数据结构
           ["Cards", "Relics", "Blessings", "HardTags"].forEach((itemType) => {
@@ -1149,9 +1145,11 @@ function loadItemDetailData(itemId, itemName) {
                         ? item.Name || item
                         : item;
                     if (currentItemId === itemId) {
+                      // 获取层数信息 - 从底层物品中获取
+                      if (typeof item === "object") {
+                        currentLayer = item.Level || item.level || item.floor || 1;
+                      }
                       foundInShow = true;
-                      layerData[normalizedLayer].show++;
-                      totalShow++;
                     }
                   });
                 }
@@ -1169,9 +1167,11 @@ function loadItemDetailData(itemId, itemName) {
                         ? item.Name || item
                         : item;
                     if (currentItemId === itemId) {
+                      // 获取层数信息 - 从底层物品中获取
+                      if (typeof item === "object") {
+                        currentLayer = item.Level || item.level || item.floor || 1;
+                      }
                       foundInSelect = true;
-                      layerData[normalizedLayer].select++;
-                      totalSelect++;
                     }
                   });
                 }
@@ -1186,9 +1186,11 @@ function loadItemDetailData(itemId, itemName) {
                         ? item.Name || item
                         : item;
                     if (currentItemId === itemId) {
+                      // 获取层数信息 - 从底层物品中获取
+                      if (typeof item === "object") {
+                        currentLayer = item.Level || item.level || item.floor || 1;
+                      }
                       foundInBuy = true;
-                      layerData[normalizedLayer].buy++;
-                      totalBuy++;
                     }
                   });
                 }
@@ -1202,17 +1204,34 @@ function loadItemDetailData(itemId, itemName) {
                       ? item.Name || item
                       : item;
                   if (currentItemId === itemId) {
+                    // 获取层数信息 - 从底层物品中获取
+                    if (typeof item === "object") {
+                      currentLayer = item.Level || item.level || item.floor || 1;
+                    }
                     foundInSelect = true;
-                    layerData[normalizedLayer].select++;
-                    totalSelect++;
                   }
                 });
               }
             }
           });
 
-          // 更新总计数
+          // 如果找到了目标物品，更新对应层数的统计
           if (foundInShow || foundInSelect || foundInBuy) {
+            const normalizedLayer = Math.min(Math.max(parseInt(currentLayer), 1), 30);
+            
+            if (foundInShow) {
+              layerData[normalizedLayer].show++;
+              totalShow++;
+            }
+            if (foundInSelect) {
+              layerData[normalizedLayer].select++;
+              totalSelect++;
+            }
+            if (foundInBuy) {
+              layerData[normalizedLayer].buy++;
+              totalBuy++;
+            }
+            
             layerData[normalizedLayer].total++;
 
             // 更新首次和最后出现时间
