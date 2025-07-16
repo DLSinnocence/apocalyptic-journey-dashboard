@@ -1,9 +1,15 @@
 import { encryptData, decryptData } from "./utils.js";
-import { supabase, TABLE_NAME, ENC_KEY_PASSPHRASE } from "./config.js";
-import { initAuthStateListener, setupAuthForms, } from "./auth.js";
+import {
+  supabase,
+  TABLE_NAME,
+  ENC_KEY_PASSPHRASE,
+  TABLE_NAME_ERROR,
+} from "./config.js";
+import { initAuthStateListener, setupAuthForms } from "./auth.js";
 
 // 全局变量
 let allData = [];
+let errorData = [];
 
 // DOM 元素
 let refreshBtn, loadingDiv, errorDiv;
@@ -42,7 +48,7 @@ document.addEventListener("DOMContentLoaded", function () {
   refreshBtn = document.getElementById("refreshBtn");
   loadingDiv = document.getElementById("loading");
   errorDiv = document.getElementById("error");
-  
+
   // 初始化Supabase认证状态监听器
   initAuthStateListener((isLoggedIn) => {
     if (isLoggedIn) {
@@ -51,7 +57,7 @@ document.addEventListener("DOMContentLoaded", function () {
       showLoginForm();
     }
   });
-  
+
   // 设置登录表单事件
   setupAuthForms();
 
@@ -70,8 +76,6 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 });
-
-
 
 // 标签页功能
 function initTabs() {
@@ -129,6 +133,7 @@ async function loadData(forceRefresh = false) {
         );
         if (Date.now() - decrypted.timestamp < CACHE_TTL) {
           allData = decrypted.data;
+          errorData = decrypted.errorData; // 从缓存中恢复 errorData
           updateUI();
           return;
         }
@@ -141,16 +146,28 @@ async function loadData(forceRefresh = false) {
       .select("*")
       .order("created_at", { ascending: false })
       .limit(1000);
+    const { data: errorDataResult, error: errorFetch } = await supabase // 修改变量名
+      .from(TABLE_NAME_ERROR)
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(1000);
 
     if (error) throw new Error(`数据获取失败: ${error.message}`);
+    if (errorFetch) throw new Error(`错误数据获取失败: ${errorFetch.message}`);
     if (!data || data.length === 0) throw new Error("没有获取到任何数据");
 
     allData = data;
+    errorData = errorDataResult || []; // 正确赋值给全局变量
+    console.log("✅ 数据加载成功，记录数:", allData.length);
     console.log("✅ 数据加载成功，保存到缓存");
 
-    // 保存缓存
+    // 保存缓存 - 同时缓存两个数据
     const encrypted = await encryptData(
-      { timestamp: Date.now(), data },
+      {
+        timestamp: Date.now(),
+        data: data,
+        errorData: errorDataResult || [], // 使用正确的变量名
+      },
       ENC_KEY_PASSPHRASE
     );
     localStorage.setItem(CACHE_KEY, JSON.stringify(encrypted));
@@ -167,7 +184,101 @@ async function loadData(forceRefresh = false) {
     }
   }
 }
+// 切换报错状态
+async function toggleErrorStatus(index) {
+  if (!errorData[index]) return;
 
+  try {
+    let parsedData;
+    if (typeof errorData[index].data === "string") {
+      parsedData = JSON.parse(errorData[index].data);
+    } else {
+      parsedData = errorData[index].data;
+    }
+
+    parsedData.isSolved = !parsedData.isSolved;
+
+    // 更新数据库
+    const { error } = await supabase
+      .from(TABLE_NAME_ERROR)
+      .update({ data: parsedData })
+      .eq("id", errorData[index].id);
+
+    if (error) {
+      console.error("更新报错状态失败:", error);
+      alert("更新失败: " + error.message);
+      return;
+    }
+
+    // 更新本地数据
+    errorData[index].data = parsedData;
+
+    // 刷新显示
+    updateErrorReport();
+
+    updateCache(); // 更新缓存
+  } catch (error) {
+    console.error("切换报错状态失败:", error);
+    alert("操作失败: " + error.message);
+  }
+}
+
+async function updateCache() {
+  // 更新缓存
+  const CACHE_KEY = "dashboard_data_cache";
+  const cached = localStorage.getItem(CACHE_KEY);
+  if (cached) {
+    const decrypted = await decryptData(JSON.parse(cached), ENC_KEY_PASSPHRASE);
+    decrypted.errorData = errorData; // 更新缓存中的 errorData
+    const encrypted = await encryptData(decrypted, ENC_KEY_PASSPHRASE);
+    localStorage.setItem(CACHE_KEY, JSON.stringify(encrypted));
+  }
+  console.log("报错状态已保存到缓存");
+}
+
+// 添加或编辑批注
+async function addErrorNote(index) {
+  if (!errorData[index]) return;
+
+  try {
+    let parsedData;
+    if (typeof errorData[index].data === "string") {
+      parsedData = JSON.parse(errorData[index].data);
+    } else {
+      parsedData = errorData[index].data;
+    }
+
+    const currentNote = parsedData.note || "";
+    const newNote = prompt("请输入批注:", currentNote);
+
+    if (newNote === null) return; // 用户取消
+
+    parsedData.note = newNote;
+
+    // 更新数据库
+    const { error } = await supabase
+      .from(TABLE_NAME_ERROR)
+      .update({ data: parsedData })
+      .eq("id", errorData[index].id);
+
+    if (error) {
+      console.error("更新批注失败:", error);
+      alert("更新失败: " + error.message);
+      return;
+    }
+    console.log("批注更新成功:", parsedData.note);
+
+    // 更新本地数据
+    errorData[index].data = parsedData;
+
+    // 刷新显示
+    updateErrorReport();
+    updateCache(); // 更新缓存
+  } catch (error) {
+    console.error("添加批注失败:", error);
+    alert("操作失败: " + error.message);
+  }
+}
 // 更新UI
 function updateUI() {
   console.log("=== 开始更新UI ===");
@@ -187,11 +298,255 @@ function updateUI() {
     updatePlayerList();
     updateCardAnalysis();
     updateTimeAnalysis();
+    updateErrorReport(); // 添加这行
 
     console.log("✅ UI更新完成");
   } catch (error) {
     console.error("❌ UI更新失败:", error);
   }
+}
+
+// 更新报错报告函数
+function updateErrorReport() {
+  console.log("=== 更新报错报告 ===");
+
+  const errorContent = document.getElementById("errors-content");
+  if (!errorContent) {
+    console.error("找不到 errors-content 元素");
+    return;
+  }
+
+  if (!errorData || errorData.length === 0) {
+    errorContent.innerHTML = '<div class="no-data">暂无报错数据</div>';
+    return;
+  }
+
+  try {
+    let html = '<div class="error-report-container">';
+
+    // 简单的统计信息
+    const totalErrors = errorData.length;
+    const solvedErrors = errorData.filter((error) => {
+      try {
+        let parsedData;
+        if (typeof error.data === "string") {
+          parsedData = JSON.parse(error.data);
+        } else {
+          parsedData = error.data;
+        }
+        return parsedData && parsedData.isSolved;
+      } catch (e) {
+        return false;
+      }
+    }).length;
+
+    html += `
+      <div class="error-stats">
+        <h3>📊 报错统计</h3>
+        <p>总数: ${totalErrors} | 已解决: ${solvedErrors} | 未解决: ${
+      totalErrors - solvedErrors
+    }</p>
+      </div>
+    `;
+
+    // 添加筛选控件
+    html += `
+      <div class="error-filter">
+        <label for="errorStatusFilter">筛选状态:</label>
+        <select id="errorStatusFilter">
+          <option value="all">全部</option>
+          <option value="solved">已解决</option>
+          <option value="unsolved">未解决</option>
+        </select>
+      </div>
+    `;
+
+    // 报错列表
+    html += '<div class="error-list">';
+    html += "<h3>🐛 报错列表</h3>";
+    html += '<div id="error-items-container">';
+
+    errorData.forEach((error, index) => {
+      try {
+        let parsedData;
+        if (typeof error.data === "string") {
+          parsedData = JSON.parse(error.data);
+        } else {
+          parsedData = error.data;
+        }
+
+        if (parsedData) {
+          const isSolved = parsedData.isSolved || false;
+          const message = parsedData.message || "未知错误";
+          const stackTrace = parsedData.stackTrace || "无堆栈信息";
+          const note = parsedData.note || "";
+          const timestamp = error.created_at
+            ? new Date(error.created_at).toLocaleString("zh-CN")
+            : "未知时间";
+
+          // 根据解决状态设置不同的样式类
+          const errorClass = isSolved ? "error-solved" : "error-unsolved";
+          const statusText = isSolved ? "✅ 已解决" : "❌ 未解决";
+          const dataStatus = isSolved ? "solved" : "unsolved";
+
+          html += `
+            <div class="error-item ${errorClass}" data-status="${dataStatus}">
+              <div class="error-header">
+                <span class="error-status">${statusText}</span>
+                <span class="error-time">${timestamp}</span>
+              </div>
+              
+              <div class="error-message">
+                <strong>错误信息:</strong>
+                <p>${escapeHtml(message)}</p>
+              </div>
+              
+              <div class="error-stack">
+                <strong>堆栈跟踪:</strong>
+                <pre>${escapeHtml(stackTrace)}</pre>
+              </div>
+              
+              ${
+                note
+                  ? `
+                <div class="error-note">
+                  <strong>批注:</strong>
+                  <p>${escapeHtml(note)}</p>
+                </div>
+              `
+                  : ""
+              }
+  <div class="error-actions">
+    <button class="btn btn-sm toggle-status-btn" data-index="${index}">
+      ${isSolved ? "标记为未解决" : "标记为已解决"}
+    </button>
+    <button class="btn btn-sm btn-primary add-note-btn" data-index="${index}">
+      ${note ? "编辑批注" : "添加批注"}
+    </button>
+  </div>
+`;
+        }
+      } catch (e) {
+        console.warn(`报错记录 ${index} 解析失败:`, e);
+      }
+    });
+
+    html += "</div>"; // 结束 error-items-container
+    html += "</div>"; // 结束 error-list
+    html += "</div>"; // 结束 error-report-container
+
+    errorContent.innerHTML = html;
+
+    // 绑定事件监听器
+    bindErrorEvents();
+
+    console.log("✅ 报错报告更新完成");
+  } catch (error) {
+    console.error("报错报告更新失败:", error);
+    errorContent.innerHTML = '<div class="error">报错数据加载失败</div>';
+  }
+}
+
+// 绑定报错相关事件
+function bindErrorEvents() {
+  const errorContent = document.getElementById("errors-content");
+  if (!errorContent) return;
+
+  // 先移除之前的事件监听器（如果存在）
+  const oldHandler = errorContent._errorEventHandler;
+  if (oldHandler) {
+    errorContent.removeEventListener("click", oldHandler);
+  }
+
+  // 创建新的事件处理函数
+  const newHandler = function (e) {
+    const target = e.target;
+
+    if (target.classList.contains("toggle-status-btn")) {
+      const index = parseInt(target.getAttribute("data-index"));
+      toggleErrorStatus(index);
+    } else if (target.classList.contains("add-note-btn")) {
+      const index = parseInt(target.getAttribute("data-index"));
+      addErrorNote(index);
+    }
+  };
+
+  // 绑定新的事件监听器
+  errorContent.addEventListener("click", newHandler);
+
+  // 保存引用以便下次移除
+  errorContent._errorEventHandler = newHandler;
+
+  // 绑定筛选事件
+  const filterSelect = document.getElementById("errorStatusFilter");
+  if (filterSelect) {
+    // 移除旧的筛选事件监听器
+    const oldFilterHandler = filterSelect._filterEventHandler;
+    if (oldFilterHandler) {
+      filterSelect.removeEventListener("change", oldFilterHandler);
+    }
+
+    // 绑定新的筛选事件监听器
+    filterSelect.addEventListener("change", filterErrors);
+    filterSelect._filterEventHandler = filterErrors;
+  }
+}
+
+// 筛选错误函数
+function filterErrors() {
+  const filterSelect = document.getElementById("errorStatusFilter");
+  const filterValue = filterSelect.value;
+  const errorItems = document.querySelectorAll(".error-item");
+
+  let visibleCount = 0;
+
+  errorItems.forEach((item) => {
+    const status = item.getAttribute("data-status");
+    let shouldShow = true;
+
+    if (filterValue === "solved" && status !== "solved") {
+      shouldShow = false;
+    } else if (filterValue === "unsolved" && status !== "unsolved") {
+      shouldShow = false;
+    }
+
+    if (shouldShow) {
+      item.style.display = "block";
+      visibleCount++;
+    } else {
+      item.style.display = "none";
+    }
+  });
+
+  // 更新显示计数
+  updateFilterCount(visibleCount, errorItems.length, filterValue);
+}
+
+// 更新筛选计数显示
+function updateFilterCount(visibleCount, totalCount, filterType) {
+  const errorList = document.querySelector(".error-list h3");
+  if (errorList) {
+    let filterText = "";
+    switch (filterType) {
+      case "solved":
+        filterText = " (已解决)";
+        break;
+      case "unsolved":
+        filterText = " (未解决)";
+        break;
+      default:
+        filterText = "";
+    }
+
+    errorList.textContent = `🐛 报错列表${filterText} - 显示 ${visibleCount}/${totalCount} 条`;
+  }
+}
+
+// HTML转义函数
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
 }
 
 // 更新统计信息
@@ -529,7 +884,11 @@ function updateCardAnalysis() {
             );
           }
           if (parsedData.HardTags) {
-            processItemData(parsedData.HardTags, itemStats.hardTags, "HardTags");
+            processItemData(
+              parsedData.HardTags,
+              itemStats.hardTags,
+              "HardTags"
+            );
           }
         }
       } catch (e) {
@@ -557,8 +916,7 @@ function processItemData(itemData, stats, itemType) {
   if (Array.isArray(itemData)) {
     // 如果是数组格式，直接统计为选择
     itemData.forEach((item) => {
-      const itemId =
-        typeof item === "object" ? item.Name || item : item;
+      const itemId = typeof item === "object" ? item.Name || item : item;
       if (itemId) {
         stats.select[itemId] = (stats.select[itemId] || 0) + 1;
       }
@@ -570,8 +928,7 @@ function processItemData(itemData, stats, itemType) {
     ["RewardShow", "ShopShow", "Show"].forEach((showType) => {
       if (itemData[showType] && Array.isArray(itemData[showType])) {
         itemData[showType].forEach((item) => {
-          const itemId =
-            typeof item === "object" ? item.Name || item : item;
+          const itemId = typeof item === "object" ? item.Name || item : item;
           if (itemId) {
             stats.show[itemId] = (stats.show[itemId] || 0) + 1;
           }
@@ -583,8 +940,7 @@ function processItemData(itemData, stats, itemType) {
     ["Select", "Selected", "Picked"].forEach((selectType) => {
       if (itemData[selectType] && Array.isArray(itemData[selectType])) {
         itemData[selectType].forEach((item) => {
-          const itemId =
-            typeof item === "object" ? item.Name || item : item;
+          const itemId = typeof item === "object" ? item.Name || item : item;
           if (itemId) {
             stats.select[itemId] = (stats.select[itemId] || 0) + 1;
           }
@@ -596,8 +952,7 @@ function processItemData(itemData, stats, itemType) {
     ["Buy", "Bought", "Purchased"].forEach((buyType) => {
       if (itemData[buyType] && Array.isArray(itemData[buyType])) {
         itemData[buyType].forEach((item) => {
-          const itemId =
-            typeof item === "object" ? item.Name || item : item;
+          const itemId = typeof item === "object" ? item.Name || item : item;
           if (itemId) {
             stats.buy[itemId] = (stats.buy[itemId] || 0) + 1;
           }
@@ -883,7 +1238,10 @@ function displayAnalysisResults(results, itemType, analysisType) {
 
   // 生成表格
   if (analysisTable) {
-    analysisTable.innerHTML = generateTable(results.slice(0, results.length), analysisType);
+    analysisTable.innerHTML = generateTable(
+      results.slice(0, results.length),
+      analysisType
+    );
   }
 }
 
@@ -1141,13 +1499,12 @@ function loadItemDetailData(itemId, itemName) {
                 if (itemData[showType] && Array.isArray(itemData[showType])) {
                   itemData[showType].forEach((item) => {
                     const currentItemId =
-                      typeof item === "object"
-                        ? item.Name || item
-                        : item;
+                      typeof item === "object" ? item.Name || item : item;
                     if (currentItemId === itemId) {
                       // 获取层数信息 - 从底层物品中获取
                       if (typeof item === "object") {
-                        currentLayer = item.Level || item.level || item.floor || 1;
+                        currentLayer =
+                          item.Level || item.level || item.floor || 1;
                       }
                       foundInShow = true;
                     }
@@ -1163,13 +1520,12 @@ function loadItemDetailData(itemId, itemName) {
                 ) {
                   itemData[selectType].forEach((item) => {
                     const currentItemId =
-                      typeof item === "object"
-                        ? item.Name || item
-                        : item;
+                      typeof item === "object" ? item.Name || item : item;
                     if (currentItemId === itemId) {
                       // 获取层数信息 - 从底层物品中获取
                       if (typeof item === "object") {
-                        currentLayer = item.Level || item.level || item.floor || 1;
+                        currentLayer =
+                          item.Level || item.level || item.floor || 1;
                       }
                       foundInSelect = true;
                     }
@@ -1182,13 +1538,12 @@ function loadItemDetailData(itemId, itemName) {
                 if (itemData[buyType] && Array.isArray(itemData[buyType])) {
                   itemData[buyType].forEach((item) => {
                     const currentItemId =
-                      typeof item === "object"
-                        ? item.Name || item
-                        : item;
+                      typeof item === "object" ? item.Name || item : item;
                     if (currentItemId === itemId) {
                       // 获取层数信息 - 从底层物品中获取
                       if (typeof item === "object") {
-                        currentLayer = item.Level || item.level || item.floor || 1;
+                        currentLayer =
+                          item.Level || item.level || item.floor || 1;
                       }
                       foundInBuy = true;
                     }
@@ -1200,13 +1555,12 @@ function loadItemDetailData(itemId, itemName) {
               if (Array.isArray(itemData)) {
                 itemData.forEach((item) => {
                   const currentItemId =
-                    typeof item === "object"
-                      ? item.Name || item
-                      : item;
+                    typeof item === "object" ? item.Name || item : item;
                   if (currentItemId === itemId) {
                     // 获取层数信息 - 从底层物品中获取
                     if (typeof item === "object") {
-                      currentLayer = item.Level || item.level || item.floor || 1;
+                      currentLayer =
+                        item.Level || item.level || item.floor || 1;
                     }
                     foundInSelect = true;
                   }
@@ -1217,8 +1571,11 @@ function loadItemDetailData(itemId, itemName) {
 
           // 如果找到了目标物品，更新对应层数的统计
           if (foundInShow || foundInSelect || foundInBuy) {
-            const normalizedLayer = Math.min(Math.max(parseInt(currentLayer), 1), 30);
-            
+            const normalizedLayer = Math.min(
+              Math.max(parseInt(currentLayer), 1),
+              30
+            );
+
             if (foundInShow) {
               layerData[normalizedLayer].show++;
               totalShow++;
@@ -1231,7 +1588,7 @@ function loadItemDetailData(itemId, itemName) {
               layerData[normalizedLayer].buy++;
               totalBuy++;
             }
-            
+
             layerData[normalizedLayer].total++;
 
             // 更新首次和最后出现时间
@@ -1286,11 +1643,11 @@ function displayItemDetail(data) {
   if (loadingEl) loadingEl.style.display = "none";
   if (contentEl) contentEl.style.display = "block";
 
-   console.log("找到的元素:", { 
-    loadingEl, 
+  console.log("找到的元素:", {
+    loadingEl,
     contentEl,
     loadingElExists: !!loadingEl,
-    contentElExists: !!contentEl
+    contentElExists: !!contentEl,
   });
   // 填充基本信息
   const basicInfoEl = document.getElementById("itemBasicInfo");
@@ -1624,7 +1981,6 @@ function closeItemDetail() {
   }
 }
 
-
 // 导出物品详情
 function exportItemDetail(itemId, itemName) {
   try {
@@ -1860,14 +2216,7 @@ function exportAnalysisResults(itemStats) {
 
     // 准备CSV数据
     const csvData = [];
-    const headers = [
-      "排名",
-      "物品名称",
-      "数值",
-      "计数",
-      "总数",
-      "类型",
-    ];
+    const headers = ["排名", "物品名称", "数值", "计数", "总数", "类型"];
     csvData.push(headers);
 
     results.forEach((item, index) => {
@@ -1893,7 +2242,12 @@ function exportAnalysisResults(itemStats) {
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
 
-    const typeNames = { cards: "卡牌", relics: "遗物", blessings: "祝福", hardTags: "难度标签" };
+    const typeNames = {
+      cards: "卡牌",
+      relics: "遗物",
+      blessings: "祝福",
+      hardTags: "难度标签",
+    };
     const analysisNames = {
       select: "选择率",
       buy: "购买率",
@@ -2083,10 +2437,10 @@ function updateTimeAnalysis() {
 function formatItemName(itemId) {
   console.log("格式化物品名称:", itemId);
   if (!itemId) return "未知物品";
-  
+
   // 如果是对象，尝试获取其字符串表示
-  if (typeof itemId === 'object') {
-    if (itemId.toString && itemId.toString() !== '[object Object]') {
+  if (typeof itemId === "object") {
+    if (itemId.toString && itemId.toString() !== "[object Object]") {
       return itemId.toString();
     }
     // 如果是对象但没有有效的toString，尝试JSON.stringify
@@ -2096,11 +2450,10 @@ function formatItemName(itemId) {
       return "未知物品";
     }
   }
-  
+
   // 确保返回字符串
   return String(itemId);
 }
-
 
 // 显示加载状态
 function showLoading(show) {
@@ -2151,7 +2504,12 @@ function exportData() {
         const dataType = "游戏选择";
         const details = JSON.stringify(parsedData);
 
-        csvData.push([time, playerId.slice(0, 6) + "......" , dataType, details]);
+        csvData.push([
+          time,
+          playerId.slice(0, 6) + "......",
+          dataType,
+          details,
+        ]);
       } catch (e) {
         console.warn("导出数据解析失败:", e);
       }
@@ -2202,7 +2560,9 @@ window.addEventListener("unhandledrejection", function (e) {
   console.error("未处理的Promise错误:", e.reason);
   showError("数据处理错误，请刷新页面重试");
 });
+// 在文件末尾添加，将函数绑定到全局作用域
+window.toggleErrorStatus = toggleErrorStatus;
+window.addErrorNote = addErrorNote;
+window.escapeHtml = escapeHtml;
 
 console.log("🚀 脚本加载完成");
-
-
