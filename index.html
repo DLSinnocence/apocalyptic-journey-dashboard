@@ -6,7 +6,7 @@
     <title>《魔女：终末旅途》游戏数据分析仪表板</title>
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
     <link rel="stylesheet" href="./css/style.css" />
-    <link href="favicon.ico" rel="shortcut icon">
+    <link href="favicon.ico" rel="shortcut icon" />
   </head>
   <body class="login-page">
     <!-- 背景装饰元素 -->
@@ -94,6 +94,7 @@
             <button class="tab-btn" data-tab="players">👥 玩家</button>
             <button class="tab-btn" data-tab="cards">🃏 卡牌分析</button>
             <button class="tab-btn" data-tab="time">⏰ 时间分析</button>
+            <button class="tab-btn" data-tab="errors">⚙️ 报错报告</button>
           </div>
 
           <!-- 标签页内容 -->
@@ -120,10 +121,16 @@
               <div class="no-data">正在加载时间数据...</div>
             </div>
           </div>
+
+          <div id="errors" class="tab-pane">
+            <div id="errors-content">
+              <div class="no-data">正在加载报错数据...</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
     <!-- 引入脚本 -->
-    <script type = "module" src="./js/script.js"></script>
+    <script type="module" src="./js/script.js"></script>
   </body>
 </html>
