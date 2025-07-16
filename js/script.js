@@ -423,7 +423,8 @@ function updateErrorReport() {
     <button class="btn btn-sm btn-primary add-note-btn" data-index="${index}">
       ${note ? "编辑批注" : "添加批注"}
     </button>
-  </div>
+  </div> 
+   </div>
 `;
         }
       } catch (e) {
