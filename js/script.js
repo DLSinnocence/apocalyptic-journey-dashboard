@@ -724,7 +724,7 @@ function updateOverview() {
           <div class="activity-item">
             <div class="activity-time">${time}</div>
             <div class="activity-desc">玩家 <strong>${
-              playerId.slice(0, 6) + "......" // 截断ID显示
+              playerId
             }</strong> 完成了一次游戏</div>
           </div>
         `;
@@ -811,7 +811,7 @@ function updatePlayerList() {
           const lastSeen = new Date(stats.lastSeen).toLocaleString("zh-CN");
           html += `
             <tr>
-              <td><strong>${playerId.slice(0, 6) + "......"}</strong></td>
+              <td><strong>${playerId}</strong></td>
               <td>${stats.count}</td>
               <td>${lastSeen}</td>
             </tr>
@@ -2507,7 +2507,7 @@ function exportData() {
 
         csvData.push([
           time,
-          playerId.slice(0, 6) + "......",
+          playerId,
           dataType,
           details,
         ]);
