@@ -306,7 +306,6 @@ function updateUI() {
   }
 }
 
-// 更新报错报告函数
 function updateErrorReport() {
   console.log("=== 更新报错报告 ===");
 
@@ -324,8 +323,12 @@ function updateErrorReport() {
   try {
     let html = '<div class="error-report-container">';
 
+    // 处理和分组错误数据
+    const groupedErrors = groupErrorsByMessage(errorData);
+    
     // 简单的统计信息
     const totalErrors = errorData.length;
+    const uniqueErrors = Object.keys(groupedErrors).length;
     const solvedErrors = errorData.filter((error) => {
       try {
         let parsedData;
@@ -343,9 +346,7 @@ function updateErrorReport() {
     html += `
       <div class="error-stats">
         <h3>📊 报错统计</h3>
-        <p>总数: ${totalErrors} | 已解决: ${solvedErrors} | 未解决: ${
-      totalErrors - solvedErrors
-    }</p>
+        <p>总数: ${totalErrors} | 独特错误: ${uniqueErrors} | 已解决: ${solvedErrors} | 未解决: ${totalErrors - solvedErrors}</p>
       </div>
     `;
 
@@ -358,86 +359,116 @@ function updateErrorReport() {
           <option value="solved">已解决</option>
           <option value="unsolved">未解决</option>
         </select>
+        
+        <label for="errorSortFilter">排序方式:</label>
+        <select id="errorSortFilter">
+          <option value="count">按出现次数</option>
+          <option value="time">按最新时间</option>
+        </select>
       </div>
     `;
 
     // 报错列表
     html += '<div class="error-list">';
-    html += "<h3>🐛 报错列表</h3>";
+    html += "<h3>🐛 报错列表 (按错误类型分组)</h3>";
     html += '<div id="error-items-container">';
 
-    errorData.forEach((error, index) => {
-      try {
-        let parsedData;
-        if (typeof error.data === "string") {
-          parsedData = JSON.parse(error.data);
-        } else {
-          parsedData = error.data;
-        }
+    // 按出现次数排序分组后的错误
+    const sortedGroups = Object.entries(groupedErrors).sort((a, b) => b[1].count - a[1].count);
 
-        if (parsedData) {
-          const isSolved = parsedData.isSolved || false;
-          const message = parsedData.message || "未知错误";
-          const stackTrace = parsedData.stackTrace || "无堆栈信息";
-          const playerid = parsedData.playerid || "未知用户"; // 获取上传者ID
-          const note = parsedData.note || "";
-          const errorId = error.id || index; // 获取错误ID
-          const timestamp = error.created_at
-            ? new Date(error.created_at).toLocaleString("zh-CN")
-            : "未知时间";
+    sortedGroups.forEach(([message, group]) => {
+      const { errors, count, latestTime, solvedCount } = group;
+      const isAllSolved = solvedCount === count;
+      const groupClass = isAllSolved ? "error-group-solved" : "error-group-unsolved";
+      const statusText = isAllSolved ? "✅ 全部已解决" : `❌ ${count - solvedCount}/${count} 未解决`;
+      
+      html += `
+        <div class="error-group ${groupClass}" data-status="${isAllSolved ? 'solved' : 'unsolved'}">
+          <div class="error-group-header" onclick="toggleErrorGroup(this)">
+            <div class="error-group-info">
+              <span class="error-count-badge">${count}次</span>
+              <span class="error-status">${statusText}</span>
+              <span class="error-latest-time">最新: ${latestTime}</span>
+              <span class="toggle-icon">▼</span>
+            </div>
+            <div class="error-group-message">
+              <strong>错误信息:</strong> ${escapeHtml(message)}
+            </div>
+          </div>
+          
+          <div class="error-group-details" style="display: none;">
+            <div class="error-instances">
+              <h4>具体实例 (${count}个):</h4>
+      `;
 
-          // 根据解决状态设置不同的样式类
-          const errorClass = isSolved ? "error-solved" : "error-unsolved";
-          const statusText = isSolved ? "✅ 已解决" : "❌ 未解决";
-          const dataStatus = isSolved ? "solved" : "unsolved";
+      // 显示该错误类型的所有实例
+      errors.forEach((error, instanceIndex) => {
+        try {
+          let parsedData;
+          if (typeof error.data === "string") {
+            parsedData = JSON.parse(error.data);
+          } else {
+            parsedData = error.data;
+          }
 
-          html += `
-            <div class="error-item ${errorClass}" data-status="${dataStatus}">
-              <div class="error-header">
-                <span class="error-status">${statusText}</span>
-                <span class="error-uploader">👤 上传者: ${escapeHtml(
-                  playerid
-                )}</span>
-                <span class="error-time">${timestamp}</span>
-              </div>
-              
-              <div class="error-message">
-                <strong>错误信息:</strong>
-                <p>${escapeHtml(message)}</p>
-              </div>
-              
-              <div class="error-stack">
-                <strong>堆栈跟踪:</strong>
-                <pre>${escapeHtml(stackTrace)}</pre>
-              </div>
-              
-              ${
-                note
-                  ? `
-                <div class="error-note">
-                  <strong>批注:</strong>
-                  <p>${escapeHtml(note)}</p>
+          if (parsedData) {
+            const isSolved = parsedData.isSolved || false;
+            const stackTrace = parsedData.stackTrace || "无堆栈信息";
+            const playerid = parsedData.playerid || "未知用户";
+            const note = parsedData.note || "";
+            const errorId = error.id || error.originalIndex;
+            const timestamp = error.created_at
+              ? new Date(error.created_at).toLocaleString("zh-CN")
+              : "未知时间";
+
+            const errorClass = isSolved ? "error-solved" : "error-unsolved";
+            const instanceStatusText = isSolved ? "✅ 已解决" : "❌ 未解决";
+            const dataStatus = isSolved ? "solved" : "unsolved";
+
+            html += `
+              <div class="error-instance ${errorClass}" data-status="${dataStatus}">
+                <div class="error-instance-header">
+                  <span class="error-status">${instanceStatusText}</span>
+                  <span class="error-uploader">👤 ${escapeHtml(playerid)}</span>
+                  <span class="error-time">${timestamp}</span>
                 </div>
-              `
-                  : ""
-              }
-  <div class="error-actions">
-    <button class="btn btn-sm toggle-status-btn" data-index="${index}">
-      ${isSolved ? "标记为未解决" : "标记为已解决"}
-    </button>
-    <button class="btn btn-sm btn-primary add-note-btn" data-index="${index}">
-      ${note ? "编辑批注" : "添加批注"}
-    </button>
-    <button class="btn btn-sm btn-danger delete-error-btn" data-index="${index}" data-error-id="${errorId}">
-      🗑️ 删除
-    </button>
-    </div> 
-   </div>
-`;
+                
+                <div class="error-stack">
+                  <strong>堆栈跟踪:</strong>
+                  <pre>${escapeHtml(stackTrace)}</pre>
+                </div>
+                
+                ${note ? `
+                  <div class="error-note">
+                    <strong>批注:</strong>
+                    <p>${escapeHtml(note)}</p>
+                  </div>
+                ` : ""}
+                
+                <div class="error-actions">
+                  <button class="btn btn-sm toggle-status-btn" data-index="${error.originalIndex}">
+                    ${isSolved ? "标记为未解决" : "标记为已解决"}
+                  </button>
+                  <button class="btn btn-sm btn-primary add-note-btn" data-index="${error.originalIndex}">
+                    ${note ? "编辑批注" : "添加批注"}
+                  </button>
+                  <button class="btn btn-sm btn-danger delete-error-btn" data-index="${error.originalIndex}" data-error-id="${errorId}">
+                    🗑️ 删除
+                  </button>
+                </div>
+              </div>
+            `;
+          }
+        } catch (e) {
+          console.warn(`报错记录解析失败:`, e);
         }
-      } catch (e) {
-        console.warn(`报错记录 ${index} 解析失败:`, e);
-      }
+      });
+
+      html += `
+            </div>
+          </div>
+        </div>
+      `;
     });
 
     html += "</div>"; // 结束 error-items-container
@@ -448,11 +479,92 @@ function updateErrorReport() {
 
     // 绑定事件监听器
     bindErrorEvents();
+    bindGroupEvents();
 
     console.log("✅ 报错报告更新完成");
   } catch (error) {
     console.error("报错报告更新失败:", error);
     errorContent.innerHTML = '<div class="error">报错数据加载失败</div>';
+  }
+}
+
+// 根据错误消息分组错误
+function groupErrorsByMessage(errorData) {
+  const groups = {};
+  
+  errorData.forEach((error, originalIndex) => {
+    try {
+      let parsedData;
+      if (typeof error.data === "string") {
+        parsedData = JSON.parse(error.data);
+      } else {
+        parsedData = error.data;
+      }
+
+      if (parsedData) {
+        const message = parsedData.message || "未知错误";
+        const isSolved = parsedData.isSolved || false;
+        const timestamp = error.created_at ? new Date(error.created_at) : new Date();
+        
+        // 添加原始索引以便后续操作
+        error.originalIndex = originalIndex;
+        
+        if (!groups[message]) {
+          groups[message] = {
+            errors: [],
+            count: 0,
+            solvedCount: 0,
+            latestTime: timestamp
+          };
+        }
+        
+        groups[message].errors.push(error);
+        groups[message].count++;
+        
+        if (isSolved) {
+          groups[message].solvedCount++;
+        }
+        
+        // 更新最新时间
+        if (timestamp > groups[message].latestTime) {
+          groups[message].latestTime = timestamp;
+        }
+      }
+    } catch (e) {
+      console.warn(`处理错误记录 ${originalIndex} 时失败:`, e);
+    }
+  });
+  
+  // 格式化时间显示
+  Object.values(groups).forEach(group => {
+    group.latestTime = group.latestTime.toLocaleString("zh-CN");
+  });
+  
+  return groups;
+}
+
+// 切换错误组的展开/收起状态
+function toggleErrorGroup(header) {
+  const details = header.nextElementSibling;
+  const icon = header.querySelector('.toggle-icon');
+  
+  if (details.style.display === 'none') {
+    details.style.display = 'block';
+    icon.textContent = '▲';
+  } else {
+    details.style.display = 'none';
+    icon.textContent = '▼';
+  }
+}
+
+// 绑定分组相关事件
+function bindGroupEvents() {
+  // 排序筛选事件
+  const sortFilter = document.getElementById('errorSortFilter');
+  if (sortFilter) {
+    sortFilter.addEventListener('change', function() {
+      updateErrorReport(); // 重新渲染以应用新的排序
+    });
   }
 }
 
@@ -2700,5 +2812,5 @@ window.toggleErrorStatus = toggleErrorStatus;
 window.addErrorNote = addErrorNote;
 window.deleteErrorReport = deleteErrorReport;
 window.escapeHtml = escapeHtml;
-
+window.toggleErrorGroup = toggleErrorGroup;
 console.log("🚀 脚本加载完成");
