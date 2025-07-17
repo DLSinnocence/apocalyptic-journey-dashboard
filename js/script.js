@@ -379,7 +379,9 @@ function updateErrorReport() {
           const isSolved = parsedData.isSolved || false;
           const message = parsedData.message || "未知错误";
           const stackTrace = parsedData.stackTrace || "无堆栈信息";
+          const playerid = parsedData.playerid || "未知用户"; // 获取上传者ID
           const note = parsedData.note || "";
+          const errorId = error.id || index; // 获取错误ID
           const timestamp = error.created_at
             ? new Date(error.created_at).toLocaleString("zh-CN")
             : "未知时间";
@@ -393,6 +395,9 @@ function updateErrorReport() {
             <div class="error-item ${errorClass}" data-status="${dataStatus}">
               <div class="error-header">
                 <span class="error-status">${statusText}</span>
+                <span class="error-uploader">👤 上传者: ${escapeHtml(
+                  playerid
+                )}</span>
                 <span class="error-time">${timestamp}</span>
               </div>
               
@@ -423,7 +428,10 @@ function updateErrorReport() {
     <button class="btn btn-sm btn-primary add-note-btn" data-index="${index}">
       ${note ? "编辑批注" : "添加批注"}
     </button>
-  </div> 
+    <button class="btn btn-sm btn-danger delete-error-btn" data-index="${index}" data-error-id="${errorId}">
+      🗑️ 删除
+    </button>
+    </div> 
    </div>
 `;
         }
@@ -448,7 +456,120 @@ function updateErrorReport() {
   }
 }
 
-// 绑定报错相关事件
+// 删除错误报告的函数
+async function deleteErrorReport(errorId, index) {
+  if (!confirm('确定要删除这个错误报告吗？此操作不可撤销！')) {
+    return;
+  }
+
+  try {
+    console.log(`正在删除错误报告 ID: ${errorId}, Index: ${index}`);
+    
+    // 显示加载状态
+    const deleteBtn = document.querySelector(`[data-index="${index}"].delete-error-btn`);
+    if (deleteBtn) {
+      deleteBtn.disabled = true;
+      deleteBtn.innerHTML = '删除中...';
+    }
+
+    // 获取要删除的错误记录的实际ID
+    const actualErrorId = errorData[index]?.id;
+    if (!actualErrorId) {
+      throw new Error('找不到要删除的错误记录');
+    }
+
+    // 发送删除请求到 Supabase
+    const { error } = await supabase
+      .from(TABLE_NAME_ERROR)
+      .delete()
+      .eq('id', actualErrorId);
+
+    if (error) {
+      throw new Error(`删除失败: ${error.message}`);
+    }
+
+    // 从本地数据中移除该错误
+    errorData.splice(index, 1);
+    
+    // 更新缓存
+    await updateCache();
+    
+    // 重新渲染错误报告列表
+    updateErrorReport();
+    
+    console.log('✅ 错误报告删除成功');
+    
+    // 显示成功消息
+    showMessage('错误报告已删除', 'success');
+    
+  } catch (error) {
+    console.error('删除错误报告失败:', error);
+    
+    // 恢复按钮状态
+    const deleteBtn = document.querySelector(`[data-index="${index}"].delete-error-btn`);
+    if (deleteBtn) {
+      deleteBtn.disabled = false;
+      deleteBtn.innerHTML = '🗑️ 删除';
+    }
+    
+    // 显示错误消息
+    showMessage(`删除失败: ${error.message}`, 'error');
+  }
+}
+
+// 显示消息的辅助函数
+function showMessage(message, type = 'info') {
+  // 创建消息元素
+  const messageDiv = document.createElement('div');
+  messageDiv.className = `message message-${type}`;
+  messageDiv.textContent = message;
+  
+  // 添加样式
+  messageDiv.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 12px 20px;
+    border-radius: 4px;
+    color: white;
+    font-weight: bold;
+    z-index: 10000;
+    animation: slideIn 0.3s ease-out;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  `;
+  
+  // 根据类型设置背景色
+  switch (type) {
+    case 'success':
+      messageDiv.style.backgroundColor = '#4CAF50';
+      break;
+    case 'error':
+      messageDiv.style.backgroundColor = '#f44336';
+      break;
+    case 'warning':
+      messageDiv.style.backgroundColor = '#ff9800';
+      break;
+    default:
+      messageDiv.style.backgroundColor = '#2196F3';
+  }
+  
+  // 添加到页面
+  document.body.appendChild(messageDiv);
+  
+  // 3秒后自动移除
+  setTimeout(() => {
+    if (messageDiv.parentNode) {
+      messageDiv.style.animation = 'slideOut 0.3s ease-in';
+      setTimeout(() => {
+        if (messageDiv.parentNode) {
+          messageDiv.remove();
+        }
+      }, 300);
+    }
+  }, 3000);
+}
+
+// 修正后的 bindErrorEvents 函数
 function bindErrorEvents() {
   const errorContent = document.getElementById("errors-content");
   if (!errorContent) return;
@@ -462,13 +583,28 @@ function bindErrorEvents() {
   // 创建新的事件处理函数
   const newHandler = function (e) {
     const target = e.target;
+    
+    console.log("按钮被点击:", target.className); // 调试日志
 
     if (target.classList.contains("toggle-status-btn")) {
+      e.preventDefault();
+      e.stopPropagation();
       const index = parseInt(target.getAttribute("data-index"));
+      console.log("切换状态，索引:", index); // 调试日志
       toggleErrorStatus(index);
     } else if (target.classList.contains("add-note-btn")) {
+      e.preventDefault();
+      e.stopPropagation();
       const index = parseInt(target.getAttribute("data-index"));
+      console.log("添加批注，索引:", index); // 调试日志
       addErrorNote(index);
+    } else if (target.classList.contains("delete-error-btn")) {
+      e.preventDefault();
+      e.stopPropagation();
+      const index = parseInt(target.getAttribute("data-index"));
+      const errorId = target.getAttribute("data-error-id");
+      console.log("删除错误，索引:", index, "ID:", errorId); // 调试日志
+      deleteErrorReport(errorId, index);
     }
   };
 
@@ -488,8 +624,13 @@ function bindErrorEvents() {
     }
 
     // 绑定新的筛选事件监听器
-    filterSelect.addEventListener("change", filterErrors);
-    filterSelect._filterEventHandler = filterErrors;
+    const newFilterHandler = function() {
+      console.log("筛选器改变"); // 调试日志
+      filterErrors();
+    };
+    
+    filterSelect.addEventListener("change", newFilterHandler);
+    filterSelect._filterEventHandler = newFilterHandler;
   }
 }
 
@@ -723,9 +864,7 @@ function updateOverview() {
         html += `
           <div class="activity-item">
             <div class="activity-time">${time}</div>
-            <div class="activity-desc">玩家 <strong>${
-              playerId
-            }</strong> 完成了一次游戏</div>
+            <div class="activity-desc">玩家 <strong>${playerId}</strong> 完成了一次游戏</div>
           </div>
         `;
       } catch (e) {
@@ -2505,12 +2644,7 @@ function exportData() {
         const dataType = "游戏选择";
         const details = JSON.stringify(parsedData);
 
-        csvData.push([
-          time,
-          playerId,
-          dataType,
-          details,
-        ]);
+        csvData.push([time, playerId, dataType, details]);
       } catch (e) {
         console.warn("导出数据解析失败:", e);
       }
@@ -2564,6 +2698,7 @@ window.addEventListener("unhandledrejection", function (e) {
 // 在文件末尾添加，将函数绑定到全局作用域
 window.toggleErrorStatus = toggleErrorStatus;
 window.addErrorNote = addErrorNote;
+window.deleteErrorReport = deleteErrorReport;
 window.escapeHtml = escapeHtml;
 
 console.log("🚀 脚本加载完成");
