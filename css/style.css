@@ -2965,4 +2965,114 @@ body {
   }
 }
 
+/* 错误分组样式 */
+.error-group {
+  margin-bottom: 15px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.error-group-solved {
+  border-color: #28a745;
+  background-color: #f8fff9;
+}
+
+.error-group-unsolved {
+  border-color: #dc3545;
+  background-color: #fff8f8;
+}
+
+.error-group-header {
+  padding: 15px;
+  background-color: #f8f9fa;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.error-group-header:hover {
+  background-color: #e9ecef;
+}
+
+.error-group-info {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 10px;
+}
+
+.error-count-badge {
+  background-color: #007bff;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.error-group-message {
+  font-size: 14px;
+  color: #333;
+}
+
+.error-group-details {
+  border-top: 1px solid #eee;
+  background-color: white;
+}
+
+.error-instances {
+  padding: 15px;
+}
+
+.error-instances h4 {
+  margin-bottom: 15px;
+  color: #666;
+  font-size: 14px;
+}
+
+.error-instance {
+  margin-bottom: 15px;
+  padding: 12px;
+  border: 1px solid #eee;
+  border-radius: 6px;
+  background-color: #fafafa;
+}
+
+.error-instance-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.toggle-icon {
+  font-size: 12px;
+  color: #666;
+}
+
+/* 筛选控件样式 */
+.error-filter {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  margin-bottom: 20px;
+  padding: 15px;
+  background-color: #f8f9fa;
+  border-radius: 6px;
+}
+
+.error-filter label {
+  font-weight: 500;
+  color: #333;
+}
+
+.error-filter select {
+  padding: 5px 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background-color: white;
+}
+
+
 
