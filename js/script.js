@@ -104,6 +104,9 @@ function initTabs() {
       if (targetPane) {
         targetPane.classList.add("active");
       }
+      
+      // 更新UI以显示新标签页的内容
+      updateUI();
     });
   });
 }
@@ -112,6 +115,11 @@ function initTabs() {
 async function loadData(forceRefresh = false) {
   console.log("=== 开始加载数据 ===");
 
+  // 保存当前页面状态
+  const currentScrollPosition = window.scrollY;
+  const currentActiveTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
+  const currentItemDetailModal = document.querySelector('.item-detail-modal.show');
+  
   showLoading(true);
   hideError();
 
@@ -135,7 +143,13 @@ async function loadData(forceRefresh = false) {
           allData = decrypted.data;
           errorData = decrypted.errorData; // 从缓存中恢复 errorData
           updateUI();
-          return;
+          restorePageState(currentScrollPosition, currentActiveTab, currentItemDetailModal);
+          showLoading(false); // 手动隐藏加载状态，因为会跳过 finally 块
+          if (refreshBtn) {
+            refreshBtn.disabled = false;
+            refreshBtn.textContent = "🔄 刷新数据";
+          }
+          return; // 这里会跳过 finally 块，所以需要在 return 前手动隐藏加载状态
         }
       }
     }
@@ -173,6 +187,7 @@ async function loadData(forceRefresh = false) {
     localStorage.setItem(CACHE_KEY, JSON.stringify(encrypted));
 
     updateUI();
+    restorePageState(currentScrollPosition, currentActiveTab, currentItemDetailModal);
   } catch (error) {
     console.error("❌ 数据加载失败:", error);
     showError(error.message);
@@ -182,6 +197,68 @@ async function loadData(forceRefresh = false) {
       refreshBtn.disabled = false;
       refreshBtn.textContent = "🔄 刷新数据";
     }
+    
+    // 强制浏览器重绘，确保UI更新可见
+    if (document.body) {
+      // 触发重绘
+      document.body.offsetHeight;
+      // 确保主内容区域可见
+      const mainContent = document.querySelector(".main-content");
+      if (mainContent) {
+        mainContent.style.display = "block";
+        mainContent.style.visibility = "visible";
+      }
+      
+      // 强制重绘当前活动的标签页内容
+      const activeTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
+      if (activeTab) {
+        const activePane = document.getElementById(activeTab);
+        if (activePane) {
+          activePane.style.display = "none";
+          // 强制重绘
+          activePane.offsetHeight;
+          activePane.style.display = "block";
+        }
+      }
+      
+      // 使用 requestAnimationFrame 确保在下一帧重绘
+      requestAnimationFrame(() => {
+        console.log("强制重绘完成");
+      });
+    }
+  }
+}
+
+// 恢复页面状态
+function restorePageState(scrollPosition, activeTab, itemDetailModal) {
+  // 恢复滚动位置
+  if (scrollPosition !== undefined) {
+    setTimeout(() => {
+      window.scrollTo(0, scrollPosition);
+    }, 100);
+  }
+  
+  // 恢复活动标签页
+  if (activeTab) {
+    const tabBtn = document.querySelector(`[data-tab="${activeTab}"]`);
+    if (tabBtn) {
+      // 移除所有活动状态
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.remove('active'));
+      
+      // 添加当前活动状态
+      tabBtn.classList.add('active');
+      const targetPane = document.getElementById(activeTab);
+      if (targetPane) {
+        targetPane.classList.add('active');
+      }
+    }
+  }
+  
+  // 恢复物品详情模态框（如果存在）
+  if (itemDetailModal) {
+    // 模态框状态会在updateUI中保持，这里不需要额外处理
+    console.log("保持物品详情模态框状态");
   }
 }
 // 切换报错状态
@@ -210,6 +287,10 @@ async function toggleErrorStatus(index) {
       return;
     }
 
+    // 保存当前页面状态
+    const currentScrollPosition = window.scrollY;
+    const currentActiveTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
+    
     // 更新本地数据
     errorData[index].data = parsedData;
 
@@ -217,6 +298,9 @@ async function toggleErrorStatus(index) {
     updateErrorReport();
 
     updateCache(); // 更新缓存
+    
+    // 恢复页面状态
+    restorePageState(currentScrollPosition, currentActiveTab, null);
   } catch (error) {
     console.error("切换报错状态失败:", error);
     alert("操作失败: " + error.message);
@@ -224,6 +308,10 @@ async function toggleErrorStatus(index) {
 }
 
 async function updateCache() {
+  // 保存当前页面状态
+  const currentScrollPosition = window.scrollY;
+  const currentActiveTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
+  
   // 更新缓存
   const CACHE_KEY = "dashboard_data_cache";
   const cached = localStorage.getItem(CACHE_KEY);
@@ -234,6 +322,9 @@ async function updateCache() {
     localStorage.setItem(CACHE_KEY, JSON.stringify(encrypted));
   }
   console.log("报错状态已保存到缓存");
+  
+  // 恢复页面状态
+  restorePageState(currentScrollPosition, currentActiveTab, null);
 }
 
 // 添加或编辑批注
@@ -268,12 +359,19 @@ async function addErrorNote(index) {
     }
     console.log("批注更新成功:", parsedData.note);
 
+    // 保存当前页面状态
+    const currentScrollPosition = window.scrollY;
+    const currentActiveTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
+    
     // 更新本地数据
     errorData[index].data = parsedData;
 
     // 刷新显示
     updateErrorReport();
     updateCache(); // 更新缓存
+    
+    // 恢复页面状态
+    restorePageState(currentScrollPosition, currentActiveTab, null);
   } catch (error) {
     console.error("添加批注失败:", error);
     alert("操作失败: " + error.message);
@@ -288,17 +386,50 @@ function updateUI() {
     const mainContent = document.querySelector(".main-content");
     if (mainContent) {
       mainContent.style.display = "block";
+      mainContent.style.visibility = "visible";
     }
 
     // 更新统计信息
     updateStats();
 
-    // 更新各个标签页
-    updateOverview();
-    updatePlayerList();
-    updateCardAnalysis();
-    updateTimeAnalysis();
-    updateErrorReport(); // 添加这行
+    // 获取当前活动的标签页
+    const activeTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
+    
+    // 确保所有非活动标签页都被隐藏，活动标签页被显示
+    document.querySelectorAll('.tab-pane').forEach(pane => {
+      if (pane.classList.contains('active')) {
+        pane.style.display = 'block';
+      } else {
+        pane.style.display = 'none';
+      }
+    });
+    
+    // 只更新当前活动的标签页内容，避免不必要的渲染
+    if (activeTab) {
+      switch (activeTab) {
+        case 'overview':
+          updateOverview();
+          break;
+        case 'players':
+          updatePlayerList();
+          break;
+        case 'cards':
+          updateCardAnalysis();
+          break;
+        case 'time':
+          updateTimeAnalysis();
+          break;
+        case 'errors':
+          updateErrorReport();
+          break;
+        default:
+          // 如果没有活动标签页，更新概览
+          updateOverview();
+      }
+    } else {
+      // 如果没有活动标签页，更新概览
+      updateOverview();
+    }
 
     console.log("✅ UI更新完成");
   } catch (error) {
@@ -321,6 +452,22 @@ function updateErrorReport() {
   }
 
   try {
+    // 保存当前的筛选状态
+    const currentStatusFilter = document.getElementById("errorStatusFilter")?.value || "all";
+    const currentSortFilter = document.getElementById("errorSortFilter")?.value || "count";
+    
+    // 保存展开的错误组状态
+    const expandedGroups = [];
+    document.querySelectorAll('.error-group-details').forEach((detail, index) => {
+      if (detail.style.display !== 'none') {
+        const groupHeader = detail.previousElementSibling;
+        const message = groupHeader?.querySelector('.error-group-message')?.textContent;
+        if (message) {
+          expandedGroups.push(message.trim());
+        }
+      }
+    });
+
     let html = '<div class="error-report-container">';
 
     // 处理和分组错误数据
@@ -350,20 +497,20 @@ function updateErrorReport() {
       </div>
     `;
 
-    // 添加筛选控件
+    // 添加筛选控件，保持当前选择
     html += `
       <div class="error-filter">
         <label for="errorStatusFilter">筛选状态:</label>
         <select id="errorStatusFilter">
-          <option value="all">全部</option>
-          <option value="solved">已解决</option>
-          <option value="unsolved">未解决</option>
+          <option value="all" ${currentStatusFilter === "all" ? "selected" : ""}>全部</option>
+          <option value="solved" ${currentStatusFilter === "solved" ? "selected" : ""}>已解决</option>
+          <option value="unsolved" ${currentStatusFilter === "unsolved" ? "selected" : ""}>未解决</option>
         </select>
         
         <label for="errorSortFilter">排序方式:</label>
         <select id="errorSortFilter">
-          <option value="count">按出现次数</option>
-          <option value="time">按最新时间</option>
+          <option value="count" ${currentSortFilter === "count" ? "selected" : ""}>按出现次数</option>
+          <option value="time" ${currentSortFilter === "time" ? "selected" : ""}>按最新时间</option>
         </select>
       </div>
     `;
@@ -382,6 +529,11 @@ function updateErrorReport() {
       const groupClass = isAllSolved ? "error-group-solved" : "error-group-unsolved";
       const statusText = isAllSolved ? "✅ 全部已解决" : `❌ ${count - solvedCount}/${count} 未解决`;
       
+      // 检查这个组是否应该保持展开状态
+      const shouldExpand = expandedGroups.some(expandedMsg => 
+        expandedMsg.includes(message) || message.includes(expandedMsg)
+      );
+      
       html += `
         <div class="error-group ${groupClass}" data-status="${isAllSolved ? 'solved' : 'unsolved'}">
           <div class="error-group-header" onclick="toggleErrorGroup(this)">
@@ -389,14 +541,14 @@ function updateErrorReport() {
               <span class="error-count-badge">${count}次</span>
               <span class="error-status">${statusText}</span>
               <span class="error-latest-time">最新: ${latestTime}</span>
-              <span class="toggle-icon">▼</span>
+              <span class="toggle-icon">${shouldExpand ? '▲' : '▼'}</span>
             </div>
             <div class="error-group-message">
               <strong>错误信息:</strong> ${escapeHtml(message)}
             </div>
           </div>
           
-          <div class="error-group-details" style="display: none;">
+          <div class="error-group-details" style="display: ${shouldExpand ? 'block' : 'none'};">
             <div class="error-instances">
               <h4>具体实例 (${count}个):</h4>
       `;
@@ -563,7 +715,14 @@ function bindGroupEvents() {
   const sortFilter = document.getElementById('errorSortFilter');
   if (sortFilter) {
     sortFilter.addEventListener('change', function() {
+      // 保存当前页面状态
+      const currentScrollPosition = window.scrollY;
+      const currentActiveTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
+      
       updateErrorReport(); // 重新渲染以应用新的排序
+      
+      // 恢复页面状态
+      restorePageState(currentScrollPosition, currentActiveTab, null);
     });
   }
 }
@@ -600,6 +759,10 @@ async function deleteErrorReport(errorId, index) {
       throw new Error(`删除失败: ${error.message}`);
     }
 
+    // 保存当前页面状态
+    const currentScrollPosition = window.scrollY;
+    const currentActiveTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
+    
     // 从本地数据中移除该错误
     errorData.splice(index, 1);
     
@@ -608,6 +771,9 @@ async function deleteErrorReport(errorId, index) {
     
     // 重新渲染错误报告列表
     updateErrorReport();
+    
+    // 恢复页面状态
+    restorePageState(currentScrollPosition, currentActiveTab, null);
     
     console.log('✅ 错误报告删除成功');
     
@@ -1098,6 +1264,12 @@ function updateCardAnalysis() {
   }
 
   try {
+    // 保存当前的筛选状态
+    const currentItemType = document.getElementById("itemTypeSelect")?.value || "cards";
+    const currentAnalysisType = document.getElementById("analysisTypeSelect")?.value || "select";
+    const currentMinCount = document.getElementById("minCountInput")?.value || "3";
+    const currentSortOrder = document.getElementById("sortOrderSelect")?.value || "desc";
+
     // 统计所有物品类型的数据
     const itemStats = {
       cards: { show: {}, select: {}, buy: {} },
@@ -1148,12 +1320,20 @@ function updateCardAnalysis() {
       }
     });
 
-    // 生成完整的分析界面
-    const html = generateAnalysisHTML(itemStats);
+    // 生成完整的分析界面，保持当前筛选状态
+    const html = generateAnalysisHTML(itemStats, {
+      itemType: currentItemType,
+      analysisType: currentAnalysisType,
+      minCount: currentMinCount,
+      sortOrder: currentSortOrder
+    });
     cardContent.innerHTML = html;
 
     // 绑定筛选事件
     bindAnalysisEvents(itemStats);
+
+    // 恢复筛选状态
+    restoreAnalysisFilters(currentItemType, currentAnalysisType, currentMinCount, currentSortOrder);
 
     console.log("✅ 物品分析更新完成");
   } catch (error) {
@@ -1215,7 +1395,14 @@ function processItemData(itemData, stats, itemType) {
 }
 
 // 生成分析界面HTML
-function generateAnalysisHTML(itemStats) {
+function generateAnalysisHTML(itemStats, currentFilters = {}) {
+  const {
+    itemType = "cards",
+    analysisType = "select", 
+    minCount = "3",
+    sortOrder = "desc"
+  } = currentFilters;
+
   let html = `
     <div class="analysis-container">
       <!-- 筛选控制面板 -->
@@ -1223,32 +1410,32 @@ function generateAnalysisHTML(itemStats) {
         <div class="control-group">
           <label for="itemTypeSelect">物品类型:</label>
           <select id="itemTypeSelect" class="form-select">
-            <option value="cards">🃏 卡牌</option>
-            <option value="relics">🏺 遗物</option>
-            <option value="blessings">✨ 祝福</option>
-            <option value="hardTags">🛠️ 难度标签</option>
+            <option value="cards" ${itemType === "cards" ? "selected" : ""}>🃏 卡牌</option>
+            <option value="relics" ${itemType === "relics" ? "selected" : ""}>🏺 遗物</option>
+            <option value="blessings" ${itemType === "blessings" ? "selected" : ""}>✨ 祝福</option>
+            <option value="hardTags" ${itemType === "hardTags" ? "selected" : ""}>🛠️ 难度标签</option>
           </select>
         </div>
         
         <div class="control-group">
           <label for="analysisTypeSelect">分析类型:</label>
           <select id="analysisTypeSelect" class="form-select">
-            <option value="select">选择率分析</option>
-            <option value="buy">购买率分析</option>
-            <option value="popularity">热门度分析</option>
+            <option value="select" ${analysisType === "select" ? "selected" : ""}>选择率分析</option>
+            <option value="buy" ${analysisType === "buy" ? "selected" : ""}>购买率分析</option>
+            <option value="popularity" ${analysisType === "popularity" ? "selected" : ""}>热门度分析</option>
           </select>
         </div>
         
         <div class="control-group">
           <label for="minCountInput">最小出现次数:</label>
-          <input type="number" id="minCountInput" class="form-input" value="3" min="1" max="100">
+          <input type="number" id="minCountInput" class="form-input" value="${minCount}" min="1" max="100">
         </div>
         
         <div class="control-group">
           <label for="sortOrderSelect">排序方式:</label>
           <select id="sortOrderSelect" class="form-select">
-            <option value="desc">从高到低</option>
-            <option value="asc">从低到高</option>
+            <option value="desc" ${sortOrder === "desc" ? "selected" : ""}>从高到低</option>
+            <option value="asc" ${sortOrder === "asc" ? "selected" : ""}>从低到高</option>
           </select>
         </div>
         
@@ -1298,6 +1485,19 @@ function generateAnalysisHTML(itemStats) {
   `;
 
   return html;
+}
+
+// 恢复分析筛选状态
+function restoreAnalysisFilters(itemType, analysisType, minCount, sortOrder) {
+  const itemTypeSelect = document.getElementById("itemTypeSelect");
+  const analysisTypeSelect = document.getElementById("analysisTypeSelect");
+  const minCountInput = document.getElementById("minCountInput");
+  const sortOrderSelect = document.getElementById("sortOrderSelect");
+
+  if (itemTypeSelect) itemTypeSelect.value = itemType;
+  if (analysisTypeSelect) analysisTypeSelect.value = analysisType;
+  if (minCountInput) minCountInput.value = minCount;
+  if (sortOrderSelect) sortOrderSelect.value = sortOrder;
 }
 
 // 绑定分析事件
