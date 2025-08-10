@@ -14,6 +14,60 @@ let errorData = [];
 // DOM 元素
 let refreshBtn, loadingDiv, errorDiv;
 
+// 全局缓存状态
+let cacheEnabled = true;
+let cacheFailureCount = 0;
+const MAX_CACHE_FAILURES = 3;
+
+// 禁用缓存函数
+function disableCache() {
+  cacheEnabled = false;
+  console.warn('⚠️ 缓存已禁用，将直接加载数据');
+  showMessage('缓存功能已禁用，数据将直接从服务器加载', 'warning');
+}
+
+// 检查是否应该禁用缓存
+function shouldDisableCache() {
+  if (cacheFailureCount >= MAX_CACHE_FAILURES) {
+    disableCache();
+    return true;
+  }
+  return false;
+}
+
+// 增强的存储错误处理
+function handleStorageError(error, operation) {
+  if (error.name === 'QuotaExceededError') {
+    console.error(`存储配额超限 (${operation}):`, error);
+    cacheFailureCount++;
+    
+    // 尝试清除缓存
+    if (clearCache()) {
+      showMessage('存储空间不足，已自动清除缓存。请重试操作。', 'warning');
+    } else {
+      showMessage('存储空间不足，请手动清除浏览器数据或联系管理员。', 'error');
+    }
+    
+    // 检查是否应该禁用缓存
+    if (shouldDisableCache()) {
+      return false;
+    }
+    
+    return false;
+  } else {
+    console.error(`存储操作失败 (${operation}):`, error);
+    cacheFailureCount++;
+    
+    // 检查是否应该禁用缓存
+    if (shouldDisableCache()) {
+      return false;
+    }
+    
+    showMessage(`存储操作失败: ${error.message}`, 'error');
+    return false;
+  }
+}
+
 // 显示应用内容
 function showAppContent() {
   document.getElementById("login-container").classList.add("hidden");
@@ -65,6 +119,18 @@ document.addEventListener("DOMContentLoaded", function () {
   if (refreshBtn) {
     refreshBtn.addEventListener("click", () => loadData(true));
   }
+  
+  // 绑定清除缓存按钮事件
+  const clearCacheBtn = document.getElementById("clearCacheBtn");
+  if (clearCacheBtn) {
+    clearCacheBtn.addEventListener("click", () => {
+      if (confirm("确定要清除所有缓存数据吗？这将强制重新加载数据。")) {
+        clearCache();
+        showMessage("缓存已清除，正在重新加载数据...", "info");
+        setTimeout(() => loadData(true), 1000);
+      }
+    });
+  }
 
   // 初始化标签页
   initTabs();
@@ -73,6 +139,12 @@ document.addEventListener("DOMContentLoaded", function () {
   supabase.auth.getSession().then(({ data: { session } }) => {
     if (session) {
       showAppContent();
+      
+      // 检查存储空间
+      const quotaCheck = checkStorageQuota();
+      if (!quotaCheck.available) {
+        showMessage(quotaCheck.message, 'warning');
+      }
     }
   });
 });
@@ -132,24 +204,40 @@ async function loadData(forceRefresh = false) {
   const CACHE_TTL = 5 * 60 * 1000; // 5分钟有效
 
   try {
-    if (!forceRefresh) {
-      const cached = localStorage.getItem(CACHE_KEY);
+    if (!forceRefresh && cacheEnabled) {
+      const cached = retrieveDataFromChunks(CACHE_KEY);
       if (cached) {
-        const decrypted = await decryptData(
-          JSON.parse(cached),
-          ENC_KEY_PASSPHRASE
-        );
-        if (Date.now() - decrypted.timestamp < CACHE_TTL) {
-          allData = decrypted.data;
-          errorData = decrypted.errorData; // 从缓存中恢复 errorData
-          updateUI();
-          restorePageState(currentScrollPosition, currentActiveTab, currentItemDetailModal);
-          showLoading(false); // 手动隐藏加载状态，因为会跳过 finally 块
-          if (refreshBtn) {
-            refreshBtn.disabled = false;
-            refreshBtn.textContent = "🔄 刷新数据";
+        try {
+          let decrypted;
+          // 尝试解密数据
+          try {
+            decrypted = await decryptData(cached, ENC_KEY_PASSPHRASE);
+          } catch (decryptError) {
+            // 如果解密失败，可能是未加密的数据
+            console.log('缓存数据解密失败，尝试直接使用:', decryptError);
+            decrypted = cached;
           }
-          return; // 这里会跳过 finally 块，所以需要在 return 前手动隐藏加载状态
+          
+          if (Date.now() - decrypted.timestamp < CACHE_TTL) {
+            allData = decrypted.data;
+            errorData = decrypted.errorData; // 从缓存中恢复 errorData
+            console.log('✅ 从缓存加载数据成功');
+            updateUI();
+            restorePageState(currentScrollPosition, currentActiveTab, currentItemDetailModal);
+            showLoading(false); // 手动隐藏加载状态，因为会跳过 finally 块
+            if (refreshBtn) {
+              refreshBtn.disabled = false;
+              refreshBtn.textContent = "🔄 刷新数据";
+            }
+            return; // 这里会跳过 finally 块，所以需要在 return 前手动隐藏加载状态
+          }
+        } catch (error) {
+          console.warn('缓存数据解析失败，清除缓存:', error);
+          clearDataChunks(CACHE_KEY);
+          cacheFailureCount++;
+          if (shouldDisableCache()) {
+            showMessage('缓存功能已禁用，将直接从服务器加载数据', 'warning');
+          }
         }
       }
     }
@@ -175,16 +263,43 @@ async function loadData(forceRefresh = false) {
     console.log("✅ 数据加载成功，记录数:", allData.length);
     console.log("✅ 数据加载成功，保存到缓存");
 
-    // 保存缓存 - 同时缓存两个数据
-    const encrypted = await encryptData(
-      {
+    // 保存缓存 - 使用分块存储避免配额超限
+    if (cacheEnabled) {
+      const cacheData = {
         timestamp: Date.now(),
         data: data,
         errorData: errorDataResult || [], // 使用正确的变量名
-      },
-      ENC_KEY_PASSPHRASE
-    );
-    localStorage.setItem(CACHE_KEY, JSON.stringify(encrypted));
+      };
+      
+      // 先尝试加密，如果失败则使用分块存储
+      try {
+        const encrypted = await encryptData(cacheData, ENC_KEY_PASSPHRASE);
+        const result = storeDataInChunks(encrypted, CACHE_KEY);
+        if (result.success) {
+          console.log(`✅ 缓存保存成功，使用 ${result.chunks} 个分块`);
+          cacheFailureCount = 0; // 重置失败计数
+        } else {
+          console.warn('⚠️ 分块存储失败，跳过缓存:', result.error);
+          if (result.error.includes('QuotaExceededError') || result.error.includes('配额超限')) {
+            showMessage('存储空间不足，已跳过缓存。建议清除浏览器数据。', 'warning');
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ 数据加密失败，尝试直接分块存储:', error);
+        const result = storeDataInChunks(cacheData, CACHE_KEY);
+        if (result.success) {
+          console.log(`✅ 缓存保存成功（未加密），使用 ${result.chunks} 个分块`);
+          cacheFailureCount = 0; // 重置失败计数
+        } else {
+          console.warn('⚠️ 分块存储失败，跳过缓存:', result.error);
+          if (result.error.includes('QuotaExceededError') || result.error.includes('配额超限')) {
+            showMessage('存储空间不足，已跳过缓存。建议清除浏览器数据。', 'warning');
+          }
+        }
+      }
+    } else {
+      console.log('⚠️ 缓存已禁用，跳过数据缓存');
+    }
 
     updateUI();
     restorePageState(currentScrollPosition, currentActiveTab, currentItemDetailModal);
@@ -313,15 +428,54 @@ async function updateCache() {
   const currentActiveTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
   
   // 更新缓存
-  const CACHE_KEY = "dashboard_data_cache";
-  const cached = localStorage.getItem(CACHE_KEY);
-  if (cached) {
-    const decrypted = await decryptData(JSON.parse(cached), ENC_KEY_PASSPHRASE);
-    decrypted.errorData = errorData; // 更新缓存中的 errorData
-    const encrypted = await encryptData(decrypted, ENC_KEY_PASSPHRASE);
-    localStorage.setItem(CACHE_KEY, JSON.stringify(encrypted));
+  if (cacheEnabled) {
+    const CACHE_KEY = "dashboard_data_cache";
+    const cached = retrieveDataFromChunks(CACHE_KEY);
+    if (cached) {
+      try {
+        let decrypted;
+        // 尝试解密数据
+        try {
+          decrypted = await decryptData(cached, ENC_KEY_PASSPHRASE);
+        } catch (decryptError) {
+          // 如果解密失败，可能是未加密的数据
+          decrypted = cached;
+        }
+        
+        decrypted.errorData = errorData; // 更新缓存中的 errorData
+        
+        // 使用分块存储更新缓存
+        try {
+          const encrypted = await encryptData(decrypted, ENC_KEY_PASSPHRASE);
+          const result = storeDataInChunks(encrypted, CACHE_KEY);
+          if (result.success) {
+            console.log(`✅ 缓存更新成功，使用 ${result.chunks} 个分块`);
+            cacheFailureCount = 0; // 重置失败计数
+          } else {
+            console.warn('⚠️ 缓存更新失败:', result.error);
+          }
+        } catch (error) {
+          console.warn('⚠️ 缓存加密失败，尝试直接分块存储:', error);
+          const result = storeDataInChunks(decrypted, CACHE_KEY);
+          if (result.success) {
+            console.log(`✅ 缓存更新成功（未加密），使用 ${result.chunks} 个分块`);
+            cacheFailureCount = 0; // 重置失败计数
+          } else {
+            console.warn('⚠️ 缓存更新失败:', result.error);
+          }
+        }
+      } catch (error) {
+        console.error('缓存更新失败:', error);
+        cacheFailureCount++;
+        if (shouldDisableCache()) {
+          showMessage('缓存功能已禁用，将直接从服务器加载数据', 'warning');
+        }
+      }
+    }
+    console.log("报错状态已保存到缓存");
+  } else {
+    console.log("⚠️ 缓存已禁用，跳过缓存更新");
   }
-  console.log("报错状态已保存到缓存");
   
   // 恢复页面状态
   restorePageState(currentScrollPosition, currentActiveTab, null);
@@ -3013,4 +3167,198 @@ window.addErrorNote = addErrorNote;
 window.deleteErrorReport = deleteErrorReport;
 window.escapeHtml = escapeHtml;
 window.toggleErrorGroup = toggleErrorGroup;
+window.clearCache = clearCache;
+window.handleStorageError = handleStorageError;
 console.log("🚀 脚本加载完成");
+
+// 数据压缩和分块工具函数
+function compressData(data) {
+  try {
+    // 使用 LZ-string 压缩算法（如果可用）或简单的 JSON 优化
+    if (typeof LZString !== 'undefined') {
+      return LZString.compress(JSON.stringify(data));
+    } else {
+      // 简单的数据优化：移除不必要的字段，压缩数字等
+      return JSON.stringify(data, (key, value) => {
+        if (value === null || value === undefined) return undefined;
+        if (typeof value === 'number' && value === 0) return 0;
+        if (typeof value === 'string' && value === '') return undefined;
+        return value;
+      });
+    }
+  } catch (error) {
+    console.warn('数据压缩失败，使用原始数据:', error);
+    return JSON.stringify(data);
+  }
+}
+
+function decompressData(compressedData) {
+  try {
+    if (typeof LZString !== 'undefined') {
+      return JSON.parse(LZString.decompress(compressedData));
+    } else {
+      return JSON.parse(compressedData);
+    }
+  } catch (error) {
+    console.warn('数据解压失败，尝试直接解析:', error);
+    try {
+      return JSON.parse(compressedData);
+    } catch (e) {
+      throw new Error('数据解析失败');
+    }
+  }
+}
+
+function chunkData(data, chunkSize = 100) {
+  const chunks = [];
+  for (let i = 0; i < data.length; i += chunkSize) {
+    chunks.push(data.slice(i, i + chunkSize));
+  }
+  return chunks;
+}
+
+function storeDataInChunks(data, baseKey, maxChunkSize = 500000) { // 500KB per chunk
+  try {
+    const compressed = compressData(data);
+    
+    if (compressed.length <= maxChunkSize) {
+      // 数据足够小，直接存储
+      try {
+        localStorage.setItem(baseKey, compressed);
+        return { success: true, chunks: 1 };
+      } catch (storageError) {
+        if (handleStorageError(storageError, '存储主数据')) {
+          return { success: false, error: '存储失败' };
+        }
+        return { success: false, error: storageError.message };
+      }
+    } else {
+      // 数据太大，需要分块
+      const chunks = chunkData(data, Math.ceil(data.length / Math.ceil(compressed.length / maxChunkSize)));
+      
+      try {
+        // 存储分块信息
+        const chunkInfo = {
+          totalChunks: chunks.length,
+          totalSize: compressed.length,
+          timestamp: Date.now()
+        };
+        
+        localStorage.setItem(`${baseKey}_info`, JSON.stringify(chunkInfo));
+        
+        // 存储每个分块
+        chunks.forEach((chunk, index) => {
+          const chunkData = compressData(chunk);
+          localStorage.setItem(`${baseKey}_chunk_${index}`, chunkData);
+        });
+        
+        return { success: true, chunks: chunks.length };
+      } catch (storageError) {
+        if (handleStorageError(storageError, '存储分块数据')) {
+          return { success: false, error: '存储失败' };
+        }
+        return { success: false, error: storageError.message };
+      }
+    }
+  } catch (error) {
+    console.error('存储数据分块失败:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+function retrieveDataFromChunks(baseKey) {
+  try {
+    // 检查是否有分块信息
+    const chunkInfo = localStorage.getItem(`${baseKey}_info`);
+    
+    if (!chunkInfo) {
+      // 没有分块信息，尝试直接读取
+      const data = localStorage.getItem(baseKey);
+      if (data) {
+        return decompressData(data);
+      }
+      return null;
+    }
+    
+    const info = JSON.parse(chunkInfo);
+    const chunks = [];
+    
+    // 读取所有分块
+    for (let i = 0; i < info.totalChunks; i++) {
+      const chunkData = localStorage.getItem(`${baseKey}_chunk_${i}`);
+      if (chunkData) {
+        chunks.push(decompressData(chunkData));
+      } else {
+        throw new Error(`分块 ${i} 数据丢失`);
+      }
+    }
+    
+    // 合并分块数据
+    return chunks.flat();
+  } catch (error) {
+    console.error('读取分块数据失败:', error);
+    return null;
+  }
+}
+
+function clearDataChunks(baseKey) {
+  try {
+    // 清除分块信息
+    localStorage.removeItem(`${baseKey}_info`);
+    
+    // 清除所有可能的分块
+    const keys = Object.keys(localStorage);
+    keys.forEach(key => {
+      if (key.startsWith(`${baseKey}_chunk_`)) {
+        localStorage.removeItem(key);
+      }
+    });
+    
+    // 清除主键（如果存在）
+    localStorage.removeItem(baseKey);
+  } catch (error) {
+    console.error('清除分块数据失败:', error);
+  }
+}
+
+// 清除缓存函数
+function clearCache() {
+  try {
+    clearDataChunks("dashboard_data_cache");
+    console.log("✅ 缓存已清除");
+    
+    // 重新启用缓存
+    enableCache();
+    
+    return true;
+  } catch (error) {
+    console.error("清除缓存失败:", error);
+    return false;
+  }
+}
+
+// 检查 localStorage 可用空间
+function checkStorageQuota() {
+  try {
+    const testKey = '__storage_test__';
+    const testValue = 'x'.repeat(1000000); // 1MB 测试数据
+    
+    localStorage.setItem(testKey, testValue);
+    localStorage.removeItem(testKey);
+    
+    return { available: true, message: '存储空间充足' };
+  } catch (error) {
+    if (error.name === 'QuotaExceededError') {
+      return { available: false, message: '存储空间不足，建议清除缓存' };
+    }
+    return { available: false, message: '存储检查失败: ' + error.message };
+  }
+}
+
+// 重新启用缓存函数
+function enableCache() {
+  cacheEnabled = true;
+  cacheFailureCount = 0;
+  console.log('✅ 缓存已重新启用');
+  showMessage('缓存功能已重新启用', 'success');
+}
