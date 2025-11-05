@@ -1199,27 +1199,37 @@ function bindErrorEvents() {
   const newHandler = function (e) {
     const target = e.target;
 
-    console.log("按钮被点击:", target.className); // 调试日志
-
     if (target.classList.contains("toggle-status-btn")) {
       e.preventDefault();
       e.stopPropagation();
-      const index = parseInt(target.getAttribute("data-index"));
-      console.log("切换状态，索引:", index); // 调试日志
-      toggleErrorStatus(index);
+
+      // 获取批量索引
+      const indices = target
+        .getAttribute("data-indices")
+        .split(",")
+        .map((i) => parseInt(i));
+
+      console.log("批量切换状态，索引:", indices);
+      toggleErrorStatus(indices); // 你需要修改 toggleErrorStatus 支持数组参数
     } else if (target.classList.contains("add-note-btn")) {
       e.preventDefault();
       e.stopPropagation();
-      const index = parseInt(target.getAttribute("data-index"));
-      console.log("添加批注，索引:", index); // 调试日志
-      addErrorNote(index);
+
+      const indices = target
+        .getAttribute("data-indices")
+        .split(",")
+        .map((i) => parseInt(i));
+
+      console.log("批量添加批注，索引:", indices);
+      addErrorNote(indices); // 你需要修改 addErrorNote 支持数组参数
     } else if (target.classList.contains("delete-error-btn")) {
       e.preventDefault();
       e.stopPropagation();
-      const index = parseInt(target.getAttribute("data-index"));
-      const errorId = target.getAttribute("data-error-id");
-      console.log("删除错误，索引:", index, "ID:", errorId); // 调试日志
-      deleteErrorReport(errorId, index);
+
+      const errorIds = target.getAttribute("data-error-ids").split(",");
+
+      console.log("批量删除错误，IDs:", errorIds);
+      deleteErrorReport(errorIds); // 你需要修改 deleteErrorReport 支持数组参数
     }
   };
 
