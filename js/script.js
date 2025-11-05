@@ -22,8 +22,8 @@ const MAX_CACHE_FAILURES = 3;
 // 禁用缓存函数
 function disableCache() {
   cacheEnabled = false;
-  console.warn('⚠️ 缓存已禁用，将直接加载数据');
-  showMessage('缓存功能已禁用，数据将直接从服务器加载', 'warning');
+  console.warn("⚠️ 缓存已禁用，将直接加载数据");
+  showMessage("缓存功能已禁用，数据将直接从服务器加载", "warning");
 }
 
 // 检查是否应该禁用缓存
@@ -37,33 +37,33 @@ function shouldDisableCache() {
 
 // 增强的存储错误处理
 function handleStorageError(error, operation) {
-  if (error.name === 'QuotaExceededError') {
+  if (error.name === "QuotaExceededError") {
     console.error(`存储配额超限 (${operation}):`, error);
     cacheFailureCount++;
-    
+
     // 尝试清除缓存
     if (clearCache()) {
-      showMessage('存储空间不足，已自动清除缓存。请重试操作。', 'warning');
+      showMessage("存储空间不足，已自动清除缓存。请重试操作。", "warning");
     } else {
-      showMessage('存储空间不足，请手动清除浏览器数据或联系管理员。', 'error');
+      showMessage("存储空间不足，请手动清除浏览器数据或联系管理员。", "error");
     }
-    
+
     // 检查是否应该禁用缓存
     if (shouldDisableCache()) {
       return false;
     }
-    
+
     return false;
   } else {
     console.error(`存储操作失败 (${operation}):`, error);
     cacheFailureCount++;
-    
+
     // 检查是否应该禁用缓存
     if (shouldDisableCache()) {
       return false;
     }
-    
-    showMessage(`存储操作失败: ${error.message}`, 'error');
+
+    showMessage(`存储操作失败: ${error.message}`, "error");
     return false;
   }
 }
@@ -119,7 +119,7 @@ document.addEventListener("DOMContentLoaded", function () {
   if (refreshBtn) {
     refreshBtn.addEventListener("click", () => loadData(true));
   }
-  
+
   // 绑定清除缓存按钮事件
   const clearCacheBtn = document.getElementById("clearCacheBtn");
   if (clearCacheBtn) {
@@ -139,11 +139,11 @@ document.addEventListener("DOMContentLoaded", function () {
   supabase.auth.getSession().then(({ data: { session } }) => {
     if (session) {
       showAppContent();
-      
+
       // 检查存储空间
       const quotaCheck = checkStorageQuota();
       if (!quotaCheck.available) {
-        showMessage(quotaCheck.message, 'warning');
+        showMessage(quotaCheck.message, "warning");
       }
     }
   });
@@ -176,7 +176,7 @@ function initTabs() {
       if (targetPane) {
         targetPane.classList.add("active");
       }
-      
+
       // 更新UI以显示新标签页的内容
       updateUI();
     });
@@ -189,9 +189,13 @@ async function loadData(forceRefresh = false) {
 
   // 保存当前页面状态
   const currentScrollPosition = window.scrollY;
-  const currentActiveTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
-  const currentItemDetailModal = document.querySelector('.item-detail-modal.show');
-  
+  const currentActiveTab = document
+    .querySelector(".tab-btn.active")
+    ?.getAttribute("data-tab");
+  const currentItemDetailModal = document.querySelector(
+    ".item-detail-modal.show"
+  );
+
   showLoading(true);
   hideError();
 
@@ -214,16 +218,20 @@ async function loadData(forceRefresh = false) {
             decrypted = await decryptData(cached, ENC_KEY_PASSPHRASE);
           } catch (decryptError) {
             // 如果解密失败，可能是未加密的数据
-            console.log('缓存数据解密失败，尝试直接使用:', decryptError);
+            console.log("缓存数据解密失败，尝试直接使用:", decryptError);
             decrypted = cached;
           }
-          
+
           if (Date.now() - decrypted.timestamp < CACHE_TTL) {
             allData = decrypted.data;
             errorData = decrypted.errorData; // 从缓存中恢复 errorData
-            console.log('✅ 从缓存加载数据成功');
+            console.log("✅ 从缓存加载数据成功");
             updateUI();
-            restorePageState(currentScrollPosition, currentActiveTab, currentItemDetailModal);
+            restorePageState(
+              currentScrollPosition,
+              currentActiveTab,
+              currentItemDetailModal
+            );
             showLoading(false); // 手动隐藏加载状态，因为会跳过 finally 块
             if (refreshBtn) {
               refreshBtn.disabled = false;
@@ -232,28 +240,22 @@ async function loadData(forceRefresh = false) {
             return; // 这里会跳过 finally 块，所以需要在 return 前手动隐藏加载状态
           }
         } catch (error) {
-          console.warn('缓存数据解析失败，清除缓存:', error);
+          console.warn("缓存数据解析失败，清除缓存:", error);
           clearDataChunks(CACHE_KEY);
           cacheFailureCount++;
           if (shouldDisableCache()) {
-            showMessage('缓存功能已禁用，将直接从服务器加载数据', 'warning');
+            showMessage("缓存功能已禁用，将直接从服务器加载数据", "warning");
           }
         }
       }
     }
 
     // 请求 Supabase 数据
-    const { data, error } = await supabase
-      .from(TABLE_NAME)
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(3000);
-    const { data: errorDataResult, error: errorFetch } = await supabase // 修改变量名
-      .from(TABLE_NAME_ERROR)
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(3000);
-
+    const { data, error } = await fetchAllData(supabase, TABLE_NAME);
+    const { data: errorDataResult, error: errorFetch } = await fetchAllData(
+      supabase,
+      TABLE_NAME_ERROR
+    );
     if (error) throw new Error(`数据获取失败: ${error.message}`);
     if (errorFetch) throw new Error(`错误数据获取失败: ${errorFetch.message}`);
     if (!data || data.length === 0) throw new Error("没有获取到任何数据");
@@ -270,7 +272,7 @@ async function loadData(forceRefresh = false) {
         data: data,
         errorData: errorDataResult || [], // 使用正确的变量名
       };
-      
+
       // 先尝试加密，如果失败则使用分块存储
       try {
         const encrypted = await encryptData(cacheData, ENC_KEY_PASSPHRASE);
@@ -279,30 +281,48 @@ async function loadData(forceRefresh = false) {
           console.log(`✅ 缓存保存成功，使用 ${result.chunks} 个分块`);
           cacheFailureCount = 0; // 重置失败计数
         } else {
-          console.warn('⚠️ 分块存储失败，跳过缓存:', result.error);
-          if (result.error.includes('QuotaExceededError') || result.error.includes('配额超限')) {
-            showMessage('存储空间不足，已跳过缓存。建议清除浏览器数据。', 'warning');
+          console.warn("⚠️ 分块存储失败，跳过缓存:", result.error);
+          if (
+            result.error.includes("QuotaExceededError") ||
+            result.error.includes("配额超限")
+          ) {
+            showMessage(
+              "存储空间不足，已跳过缓存。建议清除浏览器数据。",
+              "warning"
+            );
           }
         }
       } catch (error) {
-        console.warn('⚠️ 数据加密失败，尝试直接分块存储:', error);
+        console.warn("⚠️ 数据加密失败，尝试直接分块存储:", error);
         const result = storeDataInChunks(cacheData, CACHE_KEY);
         if (result.success) {
-          console.log(`✅ 缓存保存成功（未加密），使用 ${result.chunks} 个分块`);
+          console.log(
+            `✅ 缓存保存成功（未加密），使用 ${result.chunks} 个分块`
+          );
           cacheFailureCount = 0; // 重置失败计数
         } else {
-          console.warn('⚠️ 分块存储失败，跳过缓存:', result.error);
-          if (result.error.includes('QuotaExceededError') || result.error.includes('配额超限')) {
-            showMessage('存储空间不足，已跳过缓存。建议清除浏览器数据。', 'warning');
+          console.warn("⚠️ 分块存储失败，跳过缓存:", result.error);
+          if (
+            result.error.includes("QuotaExceededError") ||
+            result.error.includes("配额超限")
+          ) {
+            showMessage(
+              "存储空间不足，已跳过缓存。建议清除浏览器数据。",
+              "warning"
+            );
           }
         }
       }
     } else {
-      console.log('⚠️ 缓存已禁用，跳过数据缓存');
+      console.log("⚠️ 缓存已禁用，跳过数据缓存");
     }
 
     updateUI();
-    restorePageState(currentScrollPosition, currentActiveTab, currentItemDetailModal);
+    restorePageState(
+      currentScrollPosition,
+      currentActiveTab,
+      currentItemDetailModal
+    );
   } catch (error) {
     console.error("❌ 数据加载失败:", error);
     showError(error.message);
@@ -312,7 +332,7 @@ async function loadData(forceRefresh = false) {
       refreshBtn.disabled = false;
       refreshBtn.textContent = "🔄 刷新数据";
     }
-    
+
     // 强制浏览器重绘，确保UI更新可见
     if (document.body) {
       // 触发重绘
@@ -323,9 +343,11 @@ async function loadData(forceRefresh = false) {
         mainContent.style.display = "block";
         mainContent.style.visibility = "visible";
       }
-      
+
       // 强制重绘当前活动的标签页内容
-      const activeTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
+      const activeTab = document
+        .querySelector(".tab-btn.active")
+        ?.getAttribute("data-tab");
       if (activeTab) {
         const activePane = document.getElementById(activeTab);
         if (activePane) {
@@ -335,13 +357,61 @@ async function loadData(forceRefresh = false) {
           activePane.style.display = "block";
         }
       }
-      
+
       // 使用 requestAnimationFrame 确保在下一帧重绘
       requestAnimationFrame(() => {
         console.log("强制重绘完成");
       });
     }
   }
+}
+
+async function fetchAllData(supabase, tableName, batchSize = 1000) {
+  const allData = [];
+  let page = 0;
+
+  // 计算近两个月的起始时间（ISO 格式）
+  const twoMonthsAgo = new Date();
+  twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+  const twoMonthsAgoISO = twoMonthsAgo.toISOString();
+
+  console.log(`📥 开始读取表 ${tableName} 的近两个月数据（自 ${twoMonthsAgoISO} 起）...`);
+
+  while (true) {
+    const from = page * batchSize;
+    const to = from + batchSize - 1;
+
+    const { data, error } = await supabase
+      .from(tableName)
+      .select("*")
+      // ⚠️ 时间过滤条件：仅取 created_at >= 两个月前
+      .gte("created_at", twoMonthsAgoISO)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to);
+
+    if (error) {
+      console.error(`❌ 第 ${page + 1} 页查询出错:`, error.message);
+      return { data: null, error };
+    }
+
+    if (!data || data.length === 0) {
+      console.log(`✅ 数据读取完毕，共 ${allData.length} 条`);
+      break;
+    }
+
+    console.log(`📦 第 ${page + 1} 页：${data.length} 条`);
+    allData.push(...data);
+
+    if (data.length < batchSize) {
+      console.log(`✅ 已到最后一页，共 ${allData.length} 条`);
+      break;
+    }
+
+    page++;
+  }
+
+  return { data: allData, error: null };
 }
 
 // 恢复页面状态
@@ -352,24 +422,28 @@ function restorePageState(scrollPosition, activeTab, itemDetailModal) {
       window.scrollTo(0, scrollPosition);
     }, 100);
   }
-  
+
   // 恢复活动标签页
   if (activeTab) {
     const tabBtn = document.querySelector(`[data-tab="${activeTab}"]`);
     if (tabBtn) {
       // 移除所有活动状态
-      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-      document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.remove('active'));
-      
+      document
+        .querySelectorAll(".tab-btn")
+        .forEach((btn) => btn.classList.remove("active"));
+      document
+        .querySelectorAll(".tab-pane")
+        .forEach((pane) => pane.classList.remove("active"));
+
       // 添加当前活动状态
-      tabBtn.classList.add('active');
+      tabBtn.classList.add("active");
       const targetPane = document.getElementById(activeTab);
       if (targetPane) {
-        targetPane.classList.add('active');
+        targetPane.classList.add("active");
       }
     }
   }
-  
+
   // 恢复物品详情模态框（如果存在）
   if (itemDetailModal) {
     // 模态框状态会在updateUI中保持，这里不需要额外处理
@@ -404,8 +478,10 @@ async function toggleErrorStatus(index) {
 
     // 保存当前页面状态
     const currentScrollPosition = window.scrollY;
-    const currentActiveTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
-    
+    const currentActiveTab = document
+      .querySelector(".tab-btn.active")
+      ?.getAttribute("data-tab");
+
     // 更新本地数据
     errorData[index].data = parsedData;
 
@@ -413,7 +489,7 @@ async function toggleErrorStatus(index) {
     updateErrorReport();
 
     updateCache(); // 更新缓存
-    
+
     // 恢复页面状态
     restorePageState(currentScrollPosition, currentActiveTab, null);
   } catch (error) {
@@ -425,8 +501,10 @@ async function toggleErrorStatus(index) {
 async function updateCache() {
   // 保存当前页面状态
   const currentScrollPosition = window.scrollY;
-  const currentActiveTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
-  
+  const currentActiveTab = document
+    .querySelector(".tab-btn.active")
+    ?.getAttribute("data-tab");
+
   // 更新缓存
   if (cacheEnabled) {
     const CACHE_KEY = "dashboard_data_cache";
@@ -441,9 +519,9 @@ async function updateCache() {
           // 如果解密失败，可能是未加密的数据
           decrypted = cached;
         }
-        
+
         decrypted.errorData = errorData; // 更新缓存中的 errorData
-        
+
         // 使用分块存储更新缓存
         try {
           const encrypted = await encryptData(decrypted, ENC_KEY_PASSPHRASE);
@@ -452,23 +530,25 @@ async function updateCache() {
             console.log(`✅ 缓存更新成功，使用 ${result.chunks} 个分块`);
             cacheFailureCount = 0; // 重置失败计数
           } else {
-            console.warn('⚠️ 缓存更新失败:', result.error);
+            console.warn("⚠️ 缓存更新失败:", result.error);
           }
         } catch (error) {
-          console.warn('⚠️ 缓存加密失败，尝试直接分块存储:', error);
+          console.warn("⚠️ 缓存加密失败，尝试直接分块存储:", error);
           const result = storeDataInChunks(decrypted, CACHE_KEY);
           if (result.success) {
-            console.log(`✅ 缓存更新成功（未加密），使用 ${result.chunks} 个分块`);
+            console.log(
+              `✅ 缓存更新成功（未加密），使用 ${result.chunks} 个分块`
+            );
             cacheFailureCount = 0; // 重置失败计数
           } else {
-            console.warn('⚠️ 缓存更新失败:', result.error);
+            console.warn("⚠️ 缓存更新失败:", result.error);
           }
         }
       } catch (error) {
-        console.error('缓存更新失败:', error);
+        console.error("缓存更新失败:", error);
         cacheFailureCount++;
         if (shouldDisableCache()) {
-          showMessage('缓存功能已禁用，将直接从服务器加载数据', 'warning');
+          showMessage("缓存功能已禁用，将直接从服务器加载数据", "warning");
         }
       }
     }
@@ -476,7 +556,7 @@ async function updateCache() {
   } else {
     console.log("⚠️ 缓存已禁用，跳过缓存更新");
   }
-  
+
   // 恢复页面状态
   restorePageState(currentScrollPosition, currentActiveTab, null);
 }
@@ -515,15 +595,17 @@ async function addErrorNote(index) {
 
     // 保存当前页面状态
     const currentScrollPosition = window.scrollY;
-    const currentActiveTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
-    
+    const currentActiveTab = document
+      .querySelector(".tab-btn.active")
+      ?.getAttribute("data-tab");
+
     // 更新本地数据
     errorData[index].data = parsedData;
 
     // 刷新显示
     updateErrorReport();
     updateCache(); // 更新缓存
-    
+
     // 恢复页面状态
     restorePageState(currentScrollPosition, currentActiveTab, null);
   } catch (error) {
@@ -547,33 +629,35 @@ function updateUI() {
     updateStats();
 
     // 获取当前活动的标签页
-    const activeTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
-    
+    const activeTab = document
+      .querySelector(".tab-btn.active")
+      ?.getAttribute("data-tab");
+
     // 确保所有非活动标签页都被隐藏，活动标签页被显示
-    document.querySelectorAll('.tab-pane').forEach(pane => {
-      if (pane.classList.contains('active')) {
-        pane.style.display = 'block';
+    document.querySelectorAll(".tab-pane").forEach((pane) => {
+      if (pane.classList.contains("active")) {
+        pane.style.display = "block";
       } else {
-        pane.style.display = 'none';
+        pane.style.display = "none";
       }
     });
-    
+
     // 只更新当前活动的标签页内容，避免不必要的渲染
     if (activeTab) {
       switch (activeTab) {
-        case 'overview':
+        case "overview":
           updateOverview();
           break;
-        case 'players':
+        case "players":
           updatePlayerList();
           break;
-        case 'cards':
+        case "cards":
           updateCardAnalysis();
           break;
-        case 'time':
+        case "time":
           updateTimeAnalysis();
           break;
-        case 'errors':
+        case "errors":
           updateErrorReport();
           break;
         default:
@@ -607,26 +691,32 @@ function updateErrorReport() {
 
   try {
     // 保存当前的筛选状态
-    const currentStatusFilter = document.getElementById("errorStatusFilter")?.value || "all";
-    const currentSortFilter = document.getElementById("errorSortFilter")?.value || "count";
-    
+    const currentStatusFilter =
+      document.getElementById("errorStatusFilter")?.value || "all";
+    const currentSortFilter =
+      document.getElementById("errorSortFilter")?.value || "count";
+
     // 保存展开的错误组状态
     const expandedGroups = [];
-    document.querySelectorAll('.error-group-details').forEach((detail, index) => {
-      if (detail.style.display !== 'none') {
-        const groupHeader = detail.previousElementSibling;
-        const message = groupHeader?.querySelector('.error-group-message')?.textContent;
-        if (message) {
-          expandedGroups.push(message.trim());
+    document
+      .querySelectorAll(".error-group-details")
+      .forEach((detail, index) => {
+        if (detail.style.display !== "none") {
+          const groupHeader = detail.previousElementSibling;
+          const message = groupHeader?.querySelector(
+            ".error-group-message"
+          )?.textContent;
+          if (message) {
+            expandedGroups.push(message.trim());
+          }
         }
-      }
-    });
+      });
 
     let html = '<div class="error-report-container">';
 
     // 处理和分组错误数据
     const groupedErrors = groupErrorsByMessage(errorData);
-    
+
     // 简单的统计信息
     const totalErrors = errorData.length;
     const uniqueErrors = Object.keys(groupedErrors).length;
@@ -647,7 +737,9 @@ function updateErrorReport() {
     html += `
       <div class="error-stats">
         <h3>📊 报错统计</h3>
-        <p>总数: ${totalErrors} | 独特错误: ${uniqueErrors} | 已解决: ${solvedErrors} | 未解决: ${totalErrors - solvedErrors}</p>
+        <p>总数: ${totalErrors} | 独特错误: ${uniqueErrors} | 已解决: ${solvedErrors} | 未解决: ${
+      totalErrors - solvedErrors
+    }</p>
       </div>
     `;
 
@@ -656,15 +748,25 @@ function updateErrorReport() {
       <div class="error-filter">
         <label for="errorStatusFilter">筛选状态:</label>
         <select id="errorStatusFilter">
-          <option value="all" ${currentStatusFilter === "all" ? "selected" : ""}>全部</option>
-          <option value="solved" ${currentStatusFilter === "solved" ? "selected" : ""}>已解决</option>
-          <option value="unsolved" ${currentStatusFilter === "unsolved" ? "selected" : ""}>未解决</option>
+          <option value="all" ${
+            currentStatusFilter === "all" ? "selected" : ""
+          }>全部</option>
+          <option value="solved" ${
+            currentStatusFilter === "solved" ? "selected" : ""
+          }>已解决</option>
+          <option value="unsolved" ${
+            currentStatusFilter === "unsolved" ? "selected" : ""
+          }>未解决</option>
         </select>
         
         <label for="errorSortFilter">排序方式:</label>
         <select id="errorSortFilter">
-          <option value="count" ${currentSortFilter === "count" ? "selected" : ""}>按出现次数</option>
-          <option value="time" ${currentSortFilter === "time" ? "selected" : ""}>按最新时间</option>
+          <option value="count" ${
+            currentSortFilter === "count" ? "selected" : ""
+          }>按出现次数</option>
+          <option value="time" ${
+            currentSortFilter === "time" ? "selected" : ""
+          }>按最新时间</option>
         </select>
       </div>
     `;
@@ -675,34 +777,45 @@ function updateErrorReport() {
     html += '<div id="error-items-container">';
 
     // 按出现次数排序分组后的错误
-    const sortedGroups = Object.entries(groupedErrors).sort((a, b) => b[1].count - a[1].count);
+    const sortedGroups = Object.entries(groupedErrors).sort(
+      (a, b) => b[1].count - a[1].count
+    );
 
     sortedGroups.forEach(([message, group]) => {
       const { errors, count, latestTime, solvedCount } = group;
       const isAllSolved = solvedCount === count;
-      const groupClass = isAllSolved ? "error-group-solved" : "error-group-unsolved";
-      const statusText = isAllSolved ? "✅ 全部已解决" : `❌ ${count - solvedCount}/${count} 未解决`;
-      
+      const groupClass = isAllSolved
+        ? "error-group-solved"
+        : "error-group-unsolved";
+      const statusText = isAllSolved
+        ? "✅ 全部已解决"
+        : `❌ ${count - solvedCount}/${count} 未解决`;
+
       // 检查这个组是否应该保持展开状态
-      const shouldExpand = expandedGroups.some(expandedMsg => 
-        expandedMsg.includes(message) || message.includes(expandedMsg)
+      const shouldExpand = expandedGroups.some(
+        (expandedMsg) =>
+          expandedMsg.includes(message) || message.includes(expandedMsg)
       );
-      
+
       html += `
-        <div class="error-group ${groupClass}" data-status="${isAllSolved ? 'solved' : 'unsolved'}">
+        <div class="error-group ${groupClass}" data-status="${
+        isAllSolved ? "solved" : "unsolved"
+      }">
           <div class="error-group-header" onclick="toggleErrorGroup(this)">
             <div class="error-group-info">
               <span class="error-count-badge">${count}次</span>
               <span class="error-status">${statusText}</span>
               <span class="error-latest-time">最新: ${latestTime}</span>
-              <span class="toggle-icon">${shouldExpand ? '▲' : '▼'}</span>
+              <span class="toggle-icon">${shouldExpand ? "▲" : "▼"}</span>
             </div>
             <div class="error-group-message">
               <strong>错误信息:</strong> ${escapeHtml(message)}
             </div>
           </div>
           
-          <div class="error-group-details" style="display: ${shouldExpand ? 'block' : 'none'};">
+          <div class="error-group-details" style="display: ${
+            shouldExpand ? "block" : "none"
+          };">
             <div class="error-instances">
               <h4>具体实例 (${count}个):</h4>
       `;
@@ -744,21 +857,31 @@ function updateErrorReport() {
                   <pre>${escapeHtml(stackTrace)}</pre>
                 </div>
                 
-                ${note ? `
+                ${
+                  note
+                    ? `
                   <div class="error-note">
                     <strong>批注:</strong>
                     <p>${escapeHtml(note)}</p>
                   </div>
-                ` : ""}
+                `
+                    : ""
+                }
                 
                 <div class="error-actions">
-                  <button class="btn btn-sm toggle-status-btn" data-index="${error.originalIndex}">
+                  <button class="btn btn-sm toggle-status-btn" data-index="${
+                    error.originalIndex
+                  }">
                     ${isSolved ? "标记为未解决" : "标记为已解决"}
                   </button>
-                  <button class="btn btn-sm btn-primary add-note-btn" data-index="${error.originalIndex}">
+                  <button class="btn btn-sm btn-primary add-note-btn" data-index="${
+                    error.originalIndex
+                  }">
                     ${note ? "编辑批注" : "添加批注"}
                   </button>
-                  <button class="btn btn-sm btn-danger delete-error-btn" data-index="${error.originalIndex}" data-error-id="${errorId}">
+                  <button class="btn btn-sm btn-danger delete-error-btn" data-index="${
+                    error.originalIndex
+                  }" data-error-id="${errorId}">
                     🗑️ 删除
                   </button>
                 </div>
@@ -797,7 +920,7 @@ function updateErrorReport() {
 // 根据错误消息分组错误
 function groupErrorsByMessage(errorData) {
   const groups = {};
-  
+
   errorData.forEach((error, originalIndex) => {
     try {
       let parsedData;
@@ -810,27 +933,29 @@ function groupErrorsByMessage(errorData) {
       if (parsedData) {
         const message = parsedData.message || "未知错误";
         const isSolved = parsedData.isSolved || false;
-        const timestamp = error.created_at ? new Date(error.created_at) : new Date();
-        
+        const timestamp = error.created_at
+          ? new Date(error.created_at)
+          : new Date();
+
         // 添加原始索引以便后续操作
         error.originalIndex = originalIndex;
-        
+
         if (!groups[message]) {
           groups[message] = {
             errors: [],
             count: 0,
             solvedCount: 0,
-            latestTime: timestamp
+            latestTime: timestamp,
           };
         }
-        
+
         groups[message].errors.push(error);
         groups[message].count++;
-        
+
         if (isSolved) {
           groups[message].solvedCount++;
         }
-        
+
         // 更新最新时间
         if (timestamp > groups[message].latestTime) {
           groups[message].latestTime = timestamp;
@@ -840,41 +965,43 @@ function groupErrorsByMessage(errorData) {
       console.warn(`处理错误记录 ${originalIndex} 时失败:`, e);
     }
   });
-  
+
   // 格式化时间显示
-  Object.values(groups).forEach(group => {
+  Object.values(groups).forEach((group) => {
     group.latestTime = group.latestTime.toLocaleString("zh-CN");
   });
-  
+
   return groups;
 }
 
 // 切换错误组的展开/收起状态
 function toggleErrorGroup(header) {
   const details = header.nextElementSibling;
-  const icon = header.querySelector('.toggle-icon');
-  
-  if (details.style.display === 'none') {
-    details.style.display = 'block';
-    icon.textContent = '▲';
+  const icon = header.querySelector(".toggle-icon");
+
+  if (details.style.display === "none") {
+    details.style.display = "block";
+    icon.textContent = "▲";
   } else {
-    details.style.display = 'none';
-    icon.textContent = '▼';
+    details.style.display = "none";
+    icon.textContent = "▼";
   }
 }
 
 // 绑定分组相关事件
 function bindGroupEvents() {
   // 排序筛选事件
-  const sortFilter = document.getElementById('errorSortFilter');
+  const sortFilter = document.getElementById("errorSortFilter");
   if (sortFilter) {
-    sortFilter.addEventListener('change', function() {
+    sortFilter.addEventListener("change", function () {
       // 保存当前页面状态
       const currentScrollPosition = window.scrollY;
-      const currentActiveTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
-      
+      const currentActiveTab = document
+        .querySelector(".tab-btn.active")
+        ?.getAttribute("data-tab");
+
       updateErrorReport(); // 重新渲染以应用新的排序
-      
+
       // 恢复页面状态
       restorePageState(currentScrollPosition, currentActiveTab, null);
     });
@@ -883,31 +1010,33 @@ function bindGroupEvents() {
 
 // 删除错误报告的函数
 async function deleteErrorReport(errorId, index) {
-  if (!confirm('确定要删除这个错误报告吗？此操作不可撤销！')) {
+  if (!confirm("确定要删除这个错误报告吗？此操作不可撤销！")) {
     return;
   }
 
   try {
     console.log(`正在删除错误报告 ID: ${errorId}, Index: ${index}`);
-    
+
     // 显示加载状态
-    const deleteBtn = document.querySelector(`[data-index="${index}"].delete-error-btn`);
+    const deleteBtn = document.querySelector(
+      `[data-index="${index}"].delete-error-btn`
+    );
     if (deleteBtn) {
       deleteBtn.disabled = true;
-      deleteBtn.innerHTML = '删除中...';
+      deleteBtn.innerHTML = "删除中...";
     }
 
     // 获取要删除的错误记录的实际ID
     const actualErrorId = errorData[index]?.id;
     if (!actualErrorId) {
-      throw new Error('找不到要删除的错误记录');
+      throw new Error("找不到要删除的错误记录");
     }
 
     // 发送删除请求到 Supabase
     const { error } = await supabase
       .from(TABLE_NAME_ERROR)
       .delete()
-      .eq('id', actualErrorId);
+      .eq("id", actualErrorId);
 
     if (error) {
       throw new Error(`删除失败: ${error.message}`);
@@ -915,47 +1044,50 @@ async function deleteErrorReport(errorId, index) {
 
     // 保存当前页面状态
     const currentScrollPosition = window.scrollY;
-    const currentActiveTab = document.querySelector('.tab-btn.active')?.getAttribute('data-tab');
-    
+    const currentActiveTab = document
+      .querySelector(".tab-btn.active")
+      ?.getAttribute("data-tab");
+
     // 从本地数据中移除该错误
     errorData.splice(index, 1);
-    
+
     // 更新缓存
     await updateCache();
-    
+
     // 重新渲染错误报告列表
     updateErrorReport();
-    
+
     // 恢复页面状态
     restorePageState(currentScrollPosition, currentActiveTab, null);
-    
-    console.log('✅ 错误报告删除成功');
-    
+
+    console.log("✅ 错误报告删除成功");
+
     // 显示成功消息
-    showMessage('错误报告已删除', 'success');
-    
+    showMessage("错误报告已删除", "success");
   } catch (error) {
-    console.error('删除错误报告失败:', error);
-    
+    console.error("删除错误报告失败:", error);
+
     // 恢复按钮状态
-    const deleteBtn = document.querySelector(`[data-index="${index}"].delete-error-btn`);
+    const deleteBtn = document.querySelector(
+      `[data-index="${index}"].delete-error-btn`
+    );
     if (deleteBtn) {
       deleteBtn.disabled = false;
-      deleteBtn.innerHTML = '🗑️ 删除';
+      deleteBtn.innerHTML = "🗑️ 删除";
     }
-    
+
     // 显示错误消息
-    showMessage(`删除失败: ${error.message}`, 'error');
+    showMessage(`删除失败: ${error.message}`, "error");
   }
 }
 
 // 显示消息的辅助函数
-function showMessage(message, type = 'info') {
+function showMessage(message, type = "info") {
   // 创建消息元素
-  const messageDiv = document.createElement('div');
+  const messageDiv = document.createElement("div");
   messageDiv.className = `message message-${type}`;
   messageDiv.textContent = message;
-  
+
   // 添加样式
   messageDiv.style.cssText = `
     position: fixed;
@@ -969,29 +1101,29 @@ function showMessage(message, type = 'info') {
     animation: slideIn 0.3s ease-out;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   `;
-  
+
   // 根据类型设置背景色
   switch (type) {
-    case 'success':
-      messageDiv.style.backgroundColor = '#4CAF50';
+    case "success":
+      messageDiv.style.backgroundColor = "#4CAF50";
       break;
-    case 'error':
-      messageDiv.style.backgroundColor = '#f44336';
+    case "error":
+      messageDiv.style.backgroundColor = "#f44336";
       break;
-    case 'warning':
-      messageDiv.style.backgroundColor = '#ff9800';
+    case "warning":
+      messageDiv.style.backgroundColor = "#ff9800";
       break;
     default:
-      messageDiv.style.backgroundColor = '#2196F3';
+      messageDiv.style.backgroundColor = "#2196F3";
   }
-  
+
   // 添加到页面
   document.body.appendChild(messageDiv);
-  
+
   // 3秒后自动移除
   setTimeout(() => {
     if (messageDiv.parentNode) {
-      messageDiv.style.animation = 'slideOut 0.3s ease-in';
+      messageDiv.style.animation = "slideOut 0.3s ease-in";
       setTimeout(() => {
         if (messageDiv.parentNode) {
           messageDiv.remove();
@@ -1015,7 +1147,7 @@ function bindErrorEvents() {
   // 创建新的事件处理函数
   const newHandler = function (e) {
     const target = e.target;
-    
+
     console.log("按钮被点击:", target.className); // 调试日志
 
     if (target.classList.contains("toggle-status-btn")) {
@@ -1056,11 +1188,11 @@ function bindErrorEvents() {
     }
 
     // 绑定新的筛选事件监听器
-    const newFilterHandler = function() {
+    const newFilterHandler = function () {
       console.log("筛选器改变"); // 调试日志
       filterErrors();
     };
-    
+
     filterSelect.addEventListener("change", newFilterHandler);
     filterSelect._filterEventHandler = newFilterHandler;
   }
@@ -1419,10 +1551,14 @@ function updateCardAnalysis() {
 
   try {
     // 保存当前的筛选状态
-    const currentItemType = document.getElementById("itemTypeSelect")?.value || "cards";
-    const currentAnalysisType = document.getElementById("analysisTypeSelect")?.value || "select";
-    const currentMinCount = document.getElementById("minCountInput")?.value || "3";
-    const currentSortOrder = document.getElementById("sortOrderSelect")?.value || "desc";
+    const currentItemType =
+      document.getElementById("itemTypeSelect")?.value || "cards";
+    const currentAnalysisType =
+      document.getElementById("analysisTypeSelect")?.value || "select";
+    const currentMinCount =
+      document.getElementById("minCountInput")?.value || "3";
+    const currentSortOrder =
+      document.getElementById("sortOrderSelect")?.value || "desc";
 
     // 统计所有物品类型的数据
     const itemStats = {
@@ -1479,7 +1615,7 @@ function updateCardAnalysis() {
       itemType: currentItemType,
       analysisType: currentAnalysisType,
       minCount: currentMinCount,
-      sortOrder: currentSortOrder
+      sortOrder: currentSortOrder,
     });
     cardContent.innerHTML = html;
 
@@ -1487,7 +1623,12 @@ function updateCardAnalysis() {
     bindAnalysisEvents(itemStats);
 
     // 恢复筛选状态
-    restoreAnalysisFilters(currentItemType, currentAnalysisType, currentMinCount, currentSortOrder);
+    restoreAnalysisFilters(
+      currentItemType,
+      currentAnalysisType,
+      currentMinCount,
+      currentSortOrder
+    );
 
     console.log("✅ 物品分析更新完成");
   } catch (error) {
@@ -1552,9 +1693,9 @@ function processItemData(itemData, stats, itemType) {
 function generateAnalysisHTML(itemStats, currentFilters = {}) {
   const {
     itemType = "cards",
-    analysisType = "select", 
+    analysisType = "select",
     minCount = "3",
-    sortOrder = "desc"
+    sortOrder = "desc",
   } = currentFilters;
 
   let html = `
@@ -1564,19 +1705,33 @@ function generateAnalysisHTML(itemStats, currentFilters = {}) {
         <div class="control-group">
           <label for="itemTypeSelect">物品类型:</label>
           <select id="itemTypeSelect" class="form-select">
-            <option value="cards" ${itemType === "cards" ? "selected" : ""}>🃏 卡牌</option>
-            <option value="relics" ${itemType === "relics" ? "selected" : ""}>🏺 遗物</option>
-            <option value="blessings" ${itemType === "blessings" ? "selected" : ""}>✨ 祝福</option>
-            <option value="hardTags" ${itemType === "hardTags" ? "selected" : ""}>🛠️ 难度标签</option>
+            <option value="cards" ${
+              itemType === "cards" ? "selected" : ""
+            }>🃏 卡牌</option>
+            <option value="relics" ${
+              itemType === "relics" ? "selected" : ""
+            }>🏺 遗物</option>
+            <option value="blessings" ${
+              itemType === "blessings" ? "selected" : ""
+            }>✨ 祝福</option>
+            <option value="hardTags" ${
+              itemType === "hardTags" ? "selected" : ""
+            }>🛠️ 难度标签</option>
           </select>
         </div>
         
         <div class="control-group">
           <label for="analysisTypeSelect">分析类型:</label>
           <select id="analysisTypeSelect" class="form-select">
-            <option value="select" ${analysisType === "select" ? "selected" : ""}>选择率分析</option>
-            <option value="buy" ${analysisType === "buy" ? "selected" : ""}>购买率分析</option>
-            <option value="popularity" ${analysisType === "popularity" ? "selected" : ""}>热门度分析</option>
+            <option value="select" ${
+              analysisType === "select" ? "selected" : ""
+            }>选择率分析</option>
+            <option value="buy" ${
+              analysisType === "buy" ? "selected" : ""
+            }>购买率分析</option>
+            <option value="popularity" ${
+              analysisType === "popularity" ? "selected" : ""
+            }>热门度分析</option>
           </select>
         </div>
         
@@ -1588,8 +1743,12 @@ function generateAnalysisHTML(itemStats, currentFilters = {}) {
         <div class="control-group">
           <label for="sortOrderSelect">排序方式:</label>
           <select id="sortOrderSelect" class="form-select">
-            <option value="desc" ${sortOrder === "desc" ? "selected" : ""}>从高到低</option>
-            <option value="asc" ${sortOrder === "asc" ? "selected" : ""}>从低到高</option>
+            <option value="desc" ${
+              sortOrder === "desc" ? "selected" : ""
+            }>从高到低</option>
+            <option value="asc" ${
+              sortOrder === "asc" ? "selected" : ""
+            }>从低到高</option>
           </select>
         </div>
         
@@ -3174,37 +3333,43 @@ console.log("🚀 脚本加载完成");
 // 数据压缩和分块工具函数
 function compressData(data) {
   try {
-    // 使用 LZ-string 压缩算法（如果可用）或简单的 JSON 优化
-    if (typeof LZString !== 'undefined') {
-      return LZString.compress(JSON.stringify(data));
+    const input = typeof data === "string" ? data : JSON.stringify(data);
+
+    if (typeof LZString !== "undefined") {
+      return LZString.compress(input);
     } else {
-      // 简单的数据优化：移除不必要的字段，压缩数字等
+      // 简单 JSON 优化
       return JSON.stringify(data, (key, value) => {
         if (value === null || value === undefined) return undefined;
-        if (typeof value === 'number' && value === 0) return 0;
-        if (typeof value === 'string' && value === '') return undefined;
+        if (typeof value === "number" && value === 0) return 0;
+        if (typeof value === "string" && value === "") return undefined;
         return value;
       });
     }
   } catch (error) {
-    console.warn('数据压缩失败，使用原始数据:', error);
-    return JSON.stringify(data);
+    console.warn("数据压缩失败，使用原始数据:", error);
+    return typeof data === "string" ? data : JSON.stringify(data);
   }
 }
 
 function decompressData(compressedData) {
   try {
-    if (typeof LZString !== 'undefined') {
-      return JSON.parse(LZString.decompress(compressedData));
+    if (typeof LZString !== "undefined") {
+      const decompressed = LZString.decompress(data);
+      try {
+        return JSON.parse(decompressed);
+      } catch {
+        return decompressed; // 已经是字符串
+      }
     } else {
       return JSON.parse(compressedData);
     }
   } catch (error) {
-    console.warn('数据解压失败，尝试直接解析:', error);
+    console.warn("数据解压失败，尝试直接解析:", error);
     try {
       return JSON.parse(compressedData);
     } catch (e) {
-      throw new Error('数据解析失败');
+      throw new Error("数据解析失败");
     }
   }
 }
@@ -3217,51 +3382,55 @@ function chunkData(data, chunkSize = 100) {
   return chunks;
 }
 
-function storeDataInChunks(data, baseKey, maxChunkSize = 500000) { // 500KB per chunk
+function storeDataInChunks(data, baseKey, maxChunkSize = 500000) {
+  // 500KB per chunk
   try {
     const compressed = compressData(data);
-    
+
     if (compressed.length <= maxChunkSize) {
       // 数据足够小，直接存储
       try {
         localStorage.setItem(baseKey, compressed);
         return { success: true, chunks: 1 };
       } catch (storageError) {
-        if (handleStorageError(storageError, '存储主数据')) {
-          return { success: false, error: '存储失败' };
+        if (handleStorageError(storageError, "存储主数据")) {
+          return { success: false, error: "存储失败" };
         }
         return { success: false, error: storageError.message };
       }
     } else {
       // 数据太大，需要分块
-      const chunks = chunkData(data, Math.ceil(data.length / Math.ceil(compressed.length / maxChunkSize)));
-      
+      const chunks = chunkData(
+        data,
+        Math.ceil(data.length / Math.ceil(compressed.length / maxChunkSize))
+      );
+
       try {
         // 存储分块信息
         const chunkInfo = {
           totalChunks: chunks.length,
           totalSize: compressed.length,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         };
-        
+
         localStorage.setItem(`${baseKey}_info`, JSON.stringify(chunkInfo));
-        
+
         // 存储每个分块
         chunks.forEach((chunk, index) => {
           const chunkData = compressData(chunk);
           localStorage.setItem(`${baseKey}_chunk_${index}`, chunkData);
         });
-        
+
         return { success: true, chunks: chunks.length };
       } catch (storageError) {
-        if (handleStorageError(storageError, '存储分块数据')) {
-          return { success: false, error: '存储失败' };
+        if (handleStorageError(storageError, "存储分块数据")) {
+          return { success: false, error: "存储失败" };
         }
         return { success: false, error: storageError.message };
       }
     }
   } catch (error) {
-    console.error('存储数据分块失败:', error);
+    console.error("存储数据分块失败:", error);
     return { success: false, error: error.message };
   }
 }
@@ -3270,7 +3439,7 @@ function retrieveDataFromChunks(baseKey) {
   try {
     // 检查是否有分块信息
     const chunkInfo = localStorage.getItem(`${baseKey}_info`);
-    
+
     if (!chunkInfo) {
       // 没有分块信息，尝试直接读取
       const data = localStorage.getItem(baseKey);
@@ -3279,10 +3448,10 @@ function retrieveDataFromChunks(baseKey) {
       }
       return null;
     }
-    
+
     const info = JSON.parse(chunkInfo);
     const chunks = [];
-    
+
     // 读取所有分块
     for (let i = 0; i < info.totalChunks; i++) {
       const chunkData = localStorage.getItem(`${baseKey}_chunk_${i}`);
@@ -3292,11 +3461,11 @@ function retrieveDataFromChunks(baseKey) {
         throw new Error(`分块 ${i} 数据丢失`);
       }
     }
-    
+
     // 合并分块数据
     return chunks.flat();
   } catch (error) {
-    console.error('读取分块数据失败:', error);
+    console.error("读取分块数据失败:", error);
     return null;
   }
 }
@@ -3305,19 +3474,19 @@ function clearDataChunks(baseKey) {
   try {
     // 清除分块信息
     localStorage.removeItem(`${baseKey}_info`);
-    
+
     // 清除所有可能的分块
     const keys = Object.keys(localStorage);
-    keys.forEach(key => {
+    keys.forEach((key) => {
       if (key.startsWith(`${baseKey}_chunk_`)) {
         localStorage.removeItem(key);
       }
     });
-    
+
     // 清除主键（如果存在）
     localStorage.removeItem(baseKey);
   } catch (error) {
-    console.error('清除分块数据失败:', error);
+    console.error("清除分块数据失败:", error);
   }
 }
 
@@ -3326,10 +3495,10 @@ function clearCache() {
   try {
     clearDataChunks("dashboard_data_cache");
     console.log("✅ 缓存已清除");
-    
+
     // 重新启用缓存
     enableCache();
-    
+
     return true;
   } catch (error) {
     console.error("清除缓存失败:", error);
@@ -3340,18 +3509,18 @@ function clearCache() {
 // 检查 localStorage 可用空间
 function checkStorageQuota() {
   try {
-    const testKey = '__storage_test__';
-    const testValue = 'x'.repeat(1000000); // 1MB 测试数据
-    
+    const testKey = "__storage_test__";
+    const testValue = "x".repeat(1000000); // 1MB 测试数据
+
     localStorage.setItem(testKey, testValue);
     localStorage.removeItem(testKey);
-    
-    return { available: true, message: '存储空间充足' };
+
+    return { available: true, message: "存储空间充足" };
   } catch (error) {
-    if (error.name === 'QuotaExceededError') {
-      return { available: false, message: '存储空间不足，建议清除缓存' };
+    if (error.name === "QuotaExceededError") {
+      return { available: false, message: "存储空间不足，建议清除缓存" };
     }
-    return { available: false, message: '存储检查失败: ' + error.message };
+    return { available: false, message: "存储检查失败: " + error.message };
   }
 }
 
@@ -3359,6 +3528,6 @@ function checkStorageQuota() {
 function enableCache() {
   cacheEnabled = true;
   cacheFailureCount = 0;
-  console.log('✅ 缓存已重新启用');
-  showMessage('缓存功能已重新启用', 'success');
+  console.log("✅ 缓存已重新启用");
+  showMessage("缓存功能已重新启用", "success");
 }
