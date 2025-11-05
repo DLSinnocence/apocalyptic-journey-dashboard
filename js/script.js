@@ -375,7 +375,9 @@ async function fetchAllData(supabase, tableName, batchSize = 1000) {
   twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
   const twoMonthsAgoISO = twoMonthsAgo.toISOString();
 
-  console.log(`📥 开始读取表 ${tableName} 的近两个月数据（自 ${twoMonthsAgoISO} 起）...`);
+  console.log(
+    `📥 开始读取表 ${tableName} 的近两个月数据（自 ${twoMonthsAgoISO} 起）...`
+  );
 
   while (true) {
     const from = page * batchSize;
@@ -820,7 +822,14 @@ function updateErrorReport() {
               <h4>具体实例 (${count}个):</h4>
       `;
 
-      // 显示该错误类型的所有实例
+      // 工具函数：规范化堆栈，去掉尖括号里的 32 位哈希
+      function normalizeStackTrace(stackTrace) {
+        return stackTrace.replace(/<[\da-f]{32}>/gi, "<ID>");
+      }
+
+      // 先根据规范化堆栈分组
+      const errorGroups = {};
+
       errors.forEach((error, instanceIndex) => {
         try {
           let parsedData;
@@ -831,66 +840,108 @@ function updateErrorReport() {
           }
 
           if (parsedData) {
-            const isSolved = parsedData.isSolved || false;
-            const stackTrace = parsedData.stackTrace || "无堆栈信息";
-            const playerid = parsedData.playerid || "未知用户";
-            const note = parsedData.note || "";
-            const errorId = error.id || error.originalIndex;
-            const timestamp = error.created_at
-              ? new Date(error.created_at).toLocaleString("zh-CN")
-              : "未知时间";
+            const rawStackTrace = parsedData.stackTrace || "无堆栈信息";
+            const stackKey = normalizeStackTrace(rawStackTrace);
 
-            const errorClass = isSolved ? "error-solved" : "error-unsolved";
-            const instanceStatusText = isSolved ? "✅ 已解决" : "❌ 未解决";
-            const dataStatus = isSolved ? "solved" : "unsolved";
-
-            html += `
-              <div class="error-instance ${errorClass}" data-status="${dataStatus}">
-                <div class="error-instance-header">
-                  <span class="error-status">${instanceStatusText}</span>
-                  <span class="error-uploader">👤 ${escapeHtml(playerid)}</span>
-                  <span class="error-time">${timestamp}</span>
-                </div>
-                
-                <div class="error-stack">
-                  <strong>堆栈跟踪:</strong>
-                  <pre>${escapeHtml(stackTrace)}</pre>
-                </div>
-                
-                ${
-                  note
-                    ? `
-                  <div class="error-note">
-                    <strong>批注:</strong>
-                    <p>${escapeHtml(note)}</p>
-                  </div>
-                `
-                    : ""
-                }
-                
-                <div class="error-actions">
-                  <button class="btn btn-sm toggle-status-btn" data-index="${
-                    error.originalIndex
-                  }">
-                    ${isSolved ? "标记为未解决" : "标记为已解决"}
-                  </button>
-                  <button class="btn btn-sm btn-primary add-note-btn" data-index="${
-                    error.originalIndex
-                  }">
-                    ${note ? "编辑批注" : "添加批注"}
-                  </button>
-                  <button class="btn btn-sm btn-danger delete-error-btn" data-index="${
-                    error.originalIndex
-                  }" data-error-id="${errorId}">
-                    🗑️ 删除
-                  </button>
-                </div>
-              </div>
-            `;
+            if (!errorGroups[stackKey]) {
+              errorGroups[stackKey] = [];
+            }
+            errorGroups[stackKey].push({
+              error,
+              parsedData,
+              instanceIndex,
+              rawStackTrace, // 保留原始堆栈用于显示
+            });
           }
         } catch (e) {
           console.warn(`报错记录解析失败:`, e);
         }
+      });
+
+      // 根据分组生成 HTML
+
+      Object.keys(errorGroups).forEach((stackKey) => {
+        const group = errorGroups[stackKey];
+
+        // 是否全部已解决
+        const isAllSolved = group.every((item) => item.parsedData.isSolved);
+        const isSolved = isAllSolved;
+        const dataStatus = isSolved ? "solved" : "unsolved";
+        const instanceStatusText = isSolved ? "✅ 已解决" : "❌ 未解决";
+
+        // 合并 playerid（去重）
+        const playerIds = [
+          ...new Set(
+            group.map((item) => item.parsedData.playerid || "未知用户")
+          ),
+        ].join(", ");
+
+        // 合并批注
+        const notes = group.map((item) => item.parsedData.note).filter(Boolean);
+        const combinedNote = notes.join("\n") || "";
+
+        // 所有 errorId 和 originalIndex 用于批量操作
+        const errorIds = group
+          .map((item) => item.error.id || item.error.originalIndex)
+          .join(",");
+        const originalIndices = group
+          .map((item) => item.error.originalIndex)
+          .join(",");
+
+        // 最新时间
+        const latestTimestamp = group
+          .map((item) => item.error.created_at)
+          .filter(Boolean)
+          .map((t) => new Date(t))
+          .sort((a, b) => b - a)[0]; // 降序取第一个
+
+        const latestTimeStr = latestTimestamp
+          ? latestTimestamp.toLocaleString("zh-CN")
+          : "未知时间";
+
+        // 共出现次数
+        const count = group.length;
+
+        // 显示原始堆栈
+        const stackTraceDisplay = group[0].rawStackTrace;
+
+        html += `
+    <div class="error-instance ${
+      isSolved ? "error-solved" : "error-unsolved"
+    }" data-status="${dataStatus}">
+      <div class="error-instance-header">
+        <span class="error-status">${instanceStatusText}</span>
+        <span class="error-uploader">👤 ${escapeHtml(playerIds)}</span>
+        <span class="error-time">最新: ${latestTimeStr} | 共 ${count} 次</span>
+      </div>
+
+      <div class="error-stack">
+        <strong>堆栈跟踪:</strong>
+        <pre>${escapeHtml(stackTraceDisplay)}</pre>
+      </div>
+
+      ${
+        combinedNote
+          ? `<div class="error-note">
+               <strong>批注:</strong>
+               <p>${escapeHtml(combinedNote)}</p>
+             </div>`
+          : ""
+      }
+
+      <div class="error-actions">
+        <button class="btn btn-sm toggle-status-btn" data-indices="${originalIndices}">
+          ${isSolved ? "标记为未解决" : "标记为已解决"}
+        </button>
+        <button class="btn btn-sm btn-primary add-note-btn" data-indices="${originalIndices}">
+          ${combinedNote ? "编辑批注" : "添加批注"}
+        </button>
+        <button class="btn btn-sm btn-danger delete-error-btn" data-error-ids="${errorIds}">
+          🗑️ 删除
+        </button>
+      </div>
+    </div>
+  `;
       });
 
       html += `
