@@ -247,12 +247,12 @@ async function loadData(forceRefresh = false) {
       .from(TABLE_NAME)
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(1000);
+      .limit(3000);
     const { data: errorDataResult, error: errorFetch } = await supabase // 修改变量名
       .from(TABLE_NAME_ERROR)
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(1000);
+      .limit(3000);
 
     if (error) throw new Error(`数据获取失败: ${error.message}`);
     if (errorFetch) throw new Error(`错误数据获取失败: ${errorFetch.message}`);
