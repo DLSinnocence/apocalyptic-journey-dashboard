@@ -1196,7 +1196,7 @@ function bindErrorEvents() {
   }
 
   // 创建新的事件处理函数
-  const newHandler = function (e) {
+  const newHandler = async function (e) {
     const target = e.target;
 
     if (target.classList.contains("toggle-status-btn")) {
@@ -1210,7 +1210,9 @@ function bindErrorEvents() {
         .map((i) => parseInt(i));
 
       console.log("批量切换状态，索引:", indices);
-      toggleErrorStatus(indices); // 你需要修改 toggleErrorStatus 支持数组参数
+      for (const index of indices) {
+        await toggleErrorStatus(index);
+      }
     } else if (target.classList.contains("add-note-btn")) {
       e.preventDefault();
       e.stopPropagation();
@@ -1221,7 +1223,9 @@ function bindErrorEvents() {
         .map((i) => parseInt(i));
 
       console.log("批量添加批注，索引:", indices);
-      addErrorNote(indices); // 你需要修改 addErrorNote 支持数组参数
+      for (const index of indices) {
+        await addErrorNote(index);
+      }
     } else if (target.classList.contains("delete-error-btn")) {
       e.preventDefault();
       e.stopPropagation();
@@ -1229,7 +1233,9 @@ function bindErrorEvents() {
       const errorIds = target.getAttribute("data-error-ids").split(",");
 
       console.log("批量删除错误，IDs:", errorIds);
-      deleteErrorReport(errorIds); // 你需要修改 deleteErrorReport 支持数组参数
+      for (const id of errorIds) {
+        await deleteErrorReport(id);
+      }
     }
   };
 
