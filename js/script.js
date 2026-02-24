@@ -170,7 +170,6 @@ function initTabs() {
       tabBtns.forEach((b) => b.classList.remove("active"));
       tabPanes.forEach((p) => p.classList.remove("active"));
 
-      // 添加当前活动状态
       btn.classList.add("active");
       const targetPane = document.getElementById(targetTab);
       if (targetPane) {
@@ -209,42 +208,59 @@ async function loadData(forceRefresh = false) {
 
   try {
     if (!forceRefresh && cacheEnabled) {
-      const cached = retrieveDataFromChunks(CACHE_KEY);
-      if (cached) {
-        try {
-          let decrypted;
-          // 尝试解密数据
+      // 先做轻量 TTL 检查，过期则不再读缓存、直接拉取
+      const cacheTs = localStorage.getItem(CACHE_KEY + "_ts");
+      const ts = cacheTs ? Number(cacheTs) : 0;
+      if (cacheTs && Date.now() - ts < CACHE_TTL) {
+        const cached = retrieveDataFromChunks(CACHE_KEY);
+        if (cached) {
           try {
-            decrypted = await decryptData(cached, ENC_KEY_PASSPHRASE);
-          } catch (decryptError) {
-            // 如果解密失败，可能是未加密的数据
-            console.log("缓存数据解密失败，尝试直接使用:", decryptError);
-            decrypted = cached;
-          }
-
-          if (Date.now() - decrypted.timestamp < CACHE_TTL) {
-            allData = decrypted.data;
-            errorData = decrypted.errorData; // 从缓存中恢复 errorData
-            console.log("✅ 从缓存加载数据成功");
-            updateUI();
-            restorePageState(
-              currentScrollPosition,
-              currentActiveTab,
-              currentItemDetailModal
-            );
-            showLoading(false); // 手动隐藏加载状态，因为会跳过 finally 块
-            if (refreshBtn) {
-              refreshBtn.disabled = false;
-              refreshBtn.textContent = "🔄 刷新数据";
+            let decrypted;
+            const isPlainCache =
+              cached &&
+              typeof cached === "object" &&
+              "timestamp" in cached &&
+              ("data" in cached || "errorData" in cached) &&
+              !("iv" in cached && Array.isArray(cached.iv));
+            if (isPlainCache) {
+              decrypted = cached;
+            } else if (
+              cached.iv &&
+              Array.isArray(cached.iv) &&
+              typeof cached.data === "string"
+            ) {
+              try {
+                decrypted = await decryptData(cached, ENC_KEY_PASSPHRASE);
+              } catch (decryptError) {
+                console.warn("缓存解密失败，将重新拉取:", decryptError);
+                clearDataChunks(CACHE_KEY);
+                decrypted = null;
+              }
+            } else {
+              decrypted = null;
             }
-            return; // 这里会跳过 finally 块，所以需要在 return 前手动隐藏加载状态
-          }
-        } catch (error) {
-          console.warn("缓存数据解析失败，清除缓存:", error);
-          clearDataChunks(CACHE_KEY);
-          cacheFailureCount++;
-          if (shouldDisableCache()) {
-            showMessage("缓存功能已禁用，将直接从服务器加载数据", "warning");
+
+            if (decrypted && (decrypted.timestamp == null || Date.now() - decrypted.timestamp < CACHE_TTL)) {
+              allData = decrypted.data;
+              errorData = decrypted.errorData ?? [];
+              console.log("✅ 从缓存加载数据成功");
+              updateUI();
+              restorePageState(
+                currentScrollPosition,
+                currentActiveTab,
+                currentItemDetailModal
+              );
+              showLoading(false);
+              if (refreshBtn) {
+                refreshBtn.disabled = false;
+                refreshBtn.textContent = "🔄 刷新数据";
+              }
+              return;
+            }
+          } catch (error) {
+            console.warn("缓存数据解析失败，清除缓存:", error);
+            clearDataChunks(CACHE_KEY);
+            cacheFailureCount++;
           }
         }
       }
@@ -261,7 +277,7 @@ async function loadData(forceRefresh = false) {
     if (!data || data.length === 0) throw new Error("没有获取到任何数据");
 
     allData = data;
-    errorData = errorDataResult || []; // 正确赋值给全局变量
+    errorData = errorDataResult || [];
     console.log("✅ 数据加载成功，记录数:", allData.length);
     console.log("✅ 数据加载成功，保存到缓存");
 
@@ -278,6 +294,7 @@ async function loadData(forceRefresh = false) {
         const encrypted = await encryptData(cacheData, ENC_KEY_PASSPHRASE);
         const result = storeDataInChunks(encrypted, CACHE_KEY);
         if (result.success) {
+          localStorage.setItem(CACHE_KEY + "_ts", String(Date.now()));
           console.log(`✅ 缓存保存成功，使用 ${result.chunks} 个分块`);
           cacheFailureCount = 0; // 重置失败计数
         } else {
@@ -296,6 +313,7 @@ async function loadData(forceRefresh = false) {
         console.warn("⚠️ 数据加密失败，尝试直接分块存储:", error);
         const result = storeDataInChunks(cacheData, CACHE_KEY);
         if (result.success) {
+          localStorage.setItem(CACHE_KEY + "_ts", String(Date.now()));
           console.log(
             `✅ 缓存保存成功（未加密），使用 ${result.chunks} 个分块`
           );
@@ -527,6 +545,7 @@ async function updateCache() {
           const encrypted = await encryptData(decrypted, ENC_KEY_PASSPHRASE);
           const result = storeDataInChunks(encrypted, CACHE_KEY);
           if (result.success) {
+            localStorage.setItem(CACHE_KEY + "_ts", String(Date.now()));
             console.log(`✅ 缓存更新成功，使用 ${result.chunks} 个分块`);
             cacheFailureCount = 0; // 重置失败计数
           } else {
@@ -536,6 +555,7 @@ async function updateCache() {
           console.warn("⚠️ 缓存加密失败，尝试直接分块存储:", error);
           const result = storeDataInChunks(decrypted, CACHE_KEY);
           if (result.success) {
+            localStorage.setItem(CACHE_KEY + "_ts", String(Date.now()));
             console.log(
               `✅ 缓存更新成功（未加密），使用 ${result.chunks} 个分块`
             );
@@ -642,7 +662,7 @@ function updateUI() {
       }
     });
 
-    // 只更新当前活动的标签页内容，避免不必要的渲染
+    // 只更新当前活动的标签页内容
     if (activeTab) {
       switch (activeTab) {
         case "overview":
@@ -743,9 +763,12 @@ function updateErrorReport() {
       </div>
     `;
 
-    // 添加筛选控件，保持当前选择
+    // 添加筛选控件与搜索框，保持当前选择
+    const currentSearchValue = document.getElementById("errorSearchInput")?.value || "";
     html += `
       <div class="error-filter">
+        <label for="errorSearchInput">搜索:</label>
+        <input type="text" id="errorSearchInput" placeholder="按错误信息关键词筛选" value="${escapeHtml(currentSearchValue)}" />
         <label for="errorStatusFilter">筛选状态:</label>
         <select id="errorStatusFilter">
           <option value="all" ${
@@ -776,20 +799,20 @@ function updateErrorReport() {
     html += "<h3>🐛 报错列表 (按错误类型分组)</h3>";
     html += '<div id="error-items-container">';
 
-    // 按出现次数排序分组后的错误
-    const sortedGroups = Object.entries(groupedErrors).sort(
-      (a, b) => b[1].count - a[1].count
-    );
+    // 按出现次数或最新时间排序
+    const sortedGroups = Object.entries(groupedErrors).sort((a, b) => {
+      if (currentSortFilter === "time") {
+        return (b[1].latestTimeRaw || 0) - (a[1].latestTimeRaw || 0);
+      }
+      return b[1].count - a[1].count;
+    });
 
     sortedGroups.forEach(([message, group]) => {
-      const { errors, count, latestTime, solvedCount } = group;
-      const isAllSolved = solvedCount === count;
-      const groupClass = isAllSolved
+      const { errors, count, latestTime, latestSolved } = group;
+      const groupClass = latestSolved
         ? "error-group-solved"
         : "error-group-unsolved";
-      const statusText = isAllSolved
-        ? "✅ 全部已解决"
-        : `❌ ${count - solvedCount}/${count} 未解决`;
+      const statusText = latestSolved ? "✅ 已解决" : "❌ 未解决";
 
       // 检查这个组是否应该保持展开状态
       const shouldExpand = expandedGroups.some(
@@ -797,10 +820,12 @@ function updateErrorReport() {
           expandedMsg.includes(message) || message.includes(expandedMsg)
       );
 
+      const messageAttr = escapeHtml(message).replace(/"/g, "&quot;");
+      const groupIndices = errors.map((e) => e.originalIndex).join(",");
       html += `
         <div class="error-group ${groupClass}" data-status="${
-        isAllSolved ? "solved" : "unsolved"
-      }">
+        latestSolved ? "solved" : "unsolved"
+      }" data-message="${messageAttr}">
           <div class="error-group-header" onclick="toggleErrorGroup(this)">
             <div class="error-group-info">
               <span class="error-count-badge">${count}次</span>
@@ -811,6 +836,7 @@ function updateErrorReport() {
             <div class="error-group-message">
               <strong>错误信息:</strong> ${escapeHtml(message)}
             </div>
+            <button type="button" class="btn btn-sm btn-danger delete-group-btn" data-group-indices="${groupIndices}" title="删除该类型全部报错">🗑️ 删除全部</button>
           </div>
           
           <div class="error-group-details" style="display: ${
@@ -966,8 +992,23 @@ function groupErrorsByMessage(errorData) {
     }
   });
 
-  // 格式化时间显示
+  // 每组按时间倒序，并计算「最新一条是否已解决」作为整组已解决依据
   Object.values(groups).forEach((group) => {
+    group.errors.sort((a, b) => {
+      const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return tB - tA;
+    });
+    let latestSolved = false;
+    if (group.errors.length > 0) {
+      try {
+        const latest = group.errors[0];
+        const d = typeof latest.data === "string" ? JSON.parse(latest.data) : latest.data;
+        latestSolved = !!(d && d.isSolved);
+      } catch (_) {}
+    }
+    group.latestSolved = latestSolved;
+    group.latestTimeRaw = group.latestTime;
     group.latestTime = group.latestTime.toLocaleString("zh-CN");
   });
 
@@ -1005,6 +1046,42 @@ function bindGroupEvents() {
       // 恢复页面状态
       restorePageState(currentScrollPosition, currentActiveTab, null);
     });
+  }
+}
+
+// 删除该类型全部报错（indices 为 data-group-indices 逗号分隔的字符串，或兼容旧版传 message）
+async function deleteAllErrorsInGroup(indicesOrMessage) {
+  let items = []; // { index, id }
+  if (typeof indicesOrMessage === "string" && /^\d+(,\d+)*$/.test(indicesOrMessage.trim())) {
+    const indices = indicesOrMessage.split(",").map((s) => parseInt(s.trim(), 10)).filter((i) => !isNaN(i) && errorData[i] != null);
+    items = indices.map((index) => ({ index, id: errorData[index]?.id })).filter((x) => x.id);
+  } else {
+    const message = indicesOrMessage;
+    if (!message) return;
+    errorData.forEach((err, i) => {
+      try {
+        const d = typeof err.data === "string" ? JSON.parse(err.data) : err.data;
+        if (d && d.message === message) items.push({ index: i, id: err.id });
+      } catch (_) {}
+    });
+  }
+  if (items.length === 0) {
+    showMessage("未找到匹配的报错记录", "info");
+    return;
+  }
+  if (!confirm(`确定要删除该类型全部 ${items.length} 条报错吗？此操作不可撤销！`)) return;
+  try {
+    for (const { id } of items) {
+      const { error } = await supabase.from(TABLE_NAME_ERROR).delete().eq("id", id);
+      if (error) throw new Error(error.message);
+    }
+    items.sort((a, b) => b.index - a.index).forEach(({ index }) => errorData.splice(index, 1));
+    updateErrorReport();
+    showMessage(`已删除 ${items.length} 条报错`, "success");
+    updateCache().catch((err) => console.warn("缓存更新失败:", err));
+  } catch (e) {
+    console.error("删除整组报错失败:", e);
+    showMessage("删除失败: " + e.message, "error");
   }
 }
 
@@ -1051,19 +1128,11 @@ async function deleteErrorReport(errorId, index) {
     // 从本地数据中移除该错误
     errorData.splice(index, 1);
 
-    // 更新缓存
-    await updateCache();
-
-    // 重新渲染错误报告列表
+    // 先刷新 UI，再后台更新缓存
     updateErrorReport();
-
-    // 恢复页面状态
     restorePageState(currentScrollPosition, currentActiveTab, null);
-
-    console.log("✅ 错误报告删除成功");
-
-    // 显示成功消息
     showMessage("错误报告已删除", "success");
+    updateCache().catch((err) => console.warn("缓存更新失败:", err));
   } catch (error) {
     console.error("删除错误报告失败:", error);
 
@@ -1144,31 +1213,26 @@ function bindErrorEvents() {
     errorContent.removeEventListener("click", oldHandler);
   }
 
-  // 创建新的事件处理函数
   const newHandler = function (e) {
-    const target = e.target;
+    const btn = e.target.closest(".toggle-status-btn, .add-note-btn, .delete-error-btn, .delete-group-btn");
+    if (!btn) return;
 
-    console.log("按钮被点击:", target.className); // 调试日志
+    e.preventDefault();
+    e.stopPropagation();
 
-    if (target.classList.contains("toggle-status-btn")) {
-      e.preventDefault();
-      e.stopPropagation();
-      const index = parseInt(target.getAttribute("data-index"));
-      console.log("切换状态，索引:", index); // 调试日志
+    if (btn.classList.contains("toggle-status-btn")) {
+      const index = parseInt(btn.getAttribute("data-index"));
       toggleErrorStatus(index);
-    } else if (target.classList.contains("add-note-btn")) {
-      e.preventDefault();
-      e.stopPropagation();
-      const index = parseInt(target.getAttribute("data-index"));
-      console.log("添加批注，索引:", index); // 调试日志
+    } else if (btn.classList.contains("add-note-btn")) {
+      const index = parseInt(btn.getAttribute("data-index"));
       addErrorNote(index);
-    } else if (target.classList.contains("delete-error-btn")) {
-      e.preventDefault();
-      e.stopPropagation();
-      const index = parseInt(target.getAttribute("data-index"));
-      const errorId = target.getAttribute("data-error-id");
-      console.log("删除错误，索引:", index, "ID:", errorId); // 调试日志
+    } else if (btn.classList.contains("delete-error-btn")) {
+      const index = parseInt(btn.getAttribute("data-index"));
+      const errorId = btn.getAttribute("data-error-id");
       deleteErrorReport(errorId, index);
+    } else if (btn.classList.contains("delete-group-btn")) {
+      const indices = btn.getAttribute("data-group-indices");
+      deleteAllErrorsInGroup(indices != null ? indices : btn.getAttribute("data-group-message"));
     }
   };
 
@@ -1178,54 +1242,51 @@ function bindErrorEvents() {
   // 保存引用以便下次移除
   errorContent._errorEventHandler = newHandler;
 
-  // 绑定筛选事件
+  // 筛选与搜索
   const filterSelect = document.getElementById("errorStatusFilter");
   if (filterSelect) {
-    // 移除旧的筛选事件监听器
     const oldFilterHandler = filterSelect._filterEventHandler;
-    if (oldFilterHandler) {
-      filterSelect.removeEventListener("change", oldFilterHandler);
-    }
-
-    // 绑定新的筛选事件监听器
-    const newFilterHandler = function () {
-      console.log("筛选器改变"); // 调试日志
-      filterErrors();
-    };
-
+    if (oldFilterHandler) filterSelect.removeEventListener("change", oldFilterHandler);
+    const newFilterHandler = function () { filterErrors(); };
     filterSelect.addEventListener("change", newFilterHandler);
     filterSelect._filterEventHandler = newFilterHandler;
   }
+  const searchInput = document.getElementById("errorSearchInput");
+  if (searchInput) {
+    const oldSearchHandler = searchInput._searchEventHandler;
+    if (oldSearchHandler) searchInput.removeEventListener("input", oldSearchHandler);
+    const newSearchHandler = function () { filterErrors(); };
+    searchInput.addEventListener("input", newSearchHandler);
+    searchInput._searchEventHandler = newSearchHandler;
+  }
+  filterErrors();
 }
 
-// 筛选错误函数
+// 筛选错误函数（按状态 + 搜索关键词）
 function filterErrors() {
   const filterSelect = document.getElementById("errorStatusFilter");
-  const filterValue = filterSelect.value;
-  const errorItems = document.querySelectorAll(".error-item");
+  const searchInput = document.getElementById("errorSearchInput");
+  const filterValue = filterSelect ? filterSelect.value : "all";
+  const searchTrim = (searchInput ? searchInput.value : "").trim().toLowerCase();
+  const errorGroups = document.querySelectorAll(".error-group");
 
   let visibleCount = 0;
 
-  errorItems.forEach((item) => {
+  errorGroups.forEach((item) => {
     const status = item.getAttribute("data-status");
+    const message = (item.getAttribute("data-message") || "").toLowerCase();
     let shouldShow = true;
 
-    if (filterValue === "solved" && status !== "solved") {
-      shouldShow = false;
-    } else if (filterValue === "unsolved" && status !== "unsolved") {
-      shouldShow = false;
-    }
+    if (filterValue === "solved" && status !== "solved") shouldShow = false;
+    else if (filterValue === "unsolved" && status !== "unsolved") shouldShow = false;
 
-    if (shouldShow) {
-      item.style.display = "block";
-      visibleCount++;
-    } else {
-      item.style.display = "none";
-    }
+    if (shouldShow && searchTrim && !message.includes(searchTrim)) shouldShow = false;
+
+    item.style.display = shouldShow ? "block" : "none";
+    if (shouldShow) visibleCount++;
   });
 
-  // 更新显示计数
-  updateFilterCount(visibleCount, errorItems.length, filterValue);
+  updateFilterCount(visibleCount, errorGroups.length, filterValue);
 }
 
 // 更新筛选计数显示
@@ -1243,8 +1304,7 @@ function updateFilterCount(visibleCount, totalCount, filterType) {
       default:
         filterText = "";
     }
-
-    errorList.textContent = `🐛 报错列表${filterText} - 显示 ${visibleCount}/${totalCount} 条`;
+    errorList.textContent = `🐛 报错列表${filterText} - 显示 ${visibleCount}/${totalCount} 组`;
   }
 }
 
@@ -3326,6 +3386,7 @@ window.addErrorNote = addErrorNote;
 window.deleteErrorReport = deleteErrorReport;
 window.escapeHtml = escapeHtml;
 window.toggleErrorGroup = toggleErrorGroup;
+window.deleteAllErrorsInGroup = deleteAllErrorsInGroup;
 window.clearCache = clearCache;
 window.handleStorageError = handleStorageError;
 console.log("🚀 脚本加载完成");
@@ -3355,7 +3416,7 @@ function compressData(data) {
 function decompressData(compressedData) {
   try {
     if (typeof LZString !== "undefined") {
-      const decompressed = LZString.decompress(data);
+      const decompressed = LZString.decompress(compressedData);
       try {
         return JSON.parse(decompressed);
       } catch {
@@ -3472,7 +3533,7 @@ function retrieveDataFromChunks(baseKey) {
 
 function clearDataChunks(baseKey) {
   try {
-    // 清除分块信息
+    localStorage.removeItem(`${baseKey}_ts`);
     localStorage.removeItem(`${baseKey}_info`);
 
     // 清除所有可能的分块
