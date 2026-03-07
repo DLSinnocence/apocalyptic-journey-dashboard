@@ -227,7 +227,8 @@ async function loadData(forceRefresh = false) {
 
   try {
     let baseData = null,
-      baseError = null;
+      baseError = null,
+      basePing = null;
     if (cacheEnabled) {
       try {
         const cached = retrieveDataFromChunks(CACHE_KEY);
@@ -238,10 +239,39 @@ async function loadData(forceRefresh = false) {
         ) {
           baseData = cached.data;
           baseError = cached.errorData ?? [];
+          basePing = Array.isArray(cached.pingData) ? cached.pingData : [];
         }
       } catch (e) {
         console.warn("读取缓存失败:", e);
       }
+    }
+
+    // 重新打开或普通进入：有缓存就优先用缓存，不请求
+    if (!forceRefresh && baseData !== null) {
+      allData = baseData;
+      errorData = baseError ?? [];
+      pingData = basePing ?? [];
+      console.log(
+        "✅ 使用缓存，跳过请求（主表:",
+        allData.length,
+        "，错误表:",
+        errorData.length,
+        "，Ping:",
+        pingData.length,
+        "）"
+      );
+      updateUI();
+      restorePageState(
+        currentScrollPosition,
+        currentActiveTab,
+        currentItemDetailModal
+      );
+      showLoading(false);
+      if (refreshBtn) {
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = "🔄 刷新数据";
+      }
+      return;
     }
 
     const maxCreatedAt =
@@ -305,6 +335,7 @@ async function loadData(forceRefresh = false) {
         timestamp: Date.now(),
         data: allData,
         errorData: errorData,
+        pingData: pingData,
       };
       const result = storeDataInChunks(cacheData, CACHE_KEY);
       if (result.success) {
@@ -356,6 +387,7 @@ async function loadData(forceRefresh = false) {
         timestamp: Date.now(),
         data: data,
         errorData: errorDataResult || [],
+        pingData: pingData,
       };
       const result = storeDataInChunks(cacheData, CACHE_KEY);
       if (result.success) {
