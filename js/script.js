@@ -1,8 +1,6 @@
-import { encryptData, decryptData } from "./utils.js";
 import {
   supabase,
   TABLE_NAME,
-  ENC_KEY_PASSPHRASE,
   TABLE_NAME_ERROR,
 } from "./config.js";
 import { initAuthStateListener, setupAuthForms } from "./auth.js";
@@ -224,69 +222,103 @@ async function loadData(forceRefresh = false) {
   }
 
   const CACHE_KEY = "dashboard_data_cache";
-  const CACHE_TTL = 5 * 60 * 1000; // 5分钟有效
 
   try {
-    if (!forceRefresh && cacheEnabled) {
-      // 先做轻量 TTL 检查，过期则不再读缓存、直接拉取
-      const cacheTs = localStorage.getItem(CACHE_KEY + "_ts");
-      const ts = cacheTs ? Number(cacheTs) : 0;
-      if (cacheTs && Date.now() - ts < CACHE_TTL) {
+    let baseData = null,
+      baseError = null;
+    if (cacheEnabled) {
+      try {
         const cached = retrieveDataFromChunks(CACHE_KEY);
-        if (cached) {
-          try {
-            let decrypted;
-            const isPlainCache =
-              cached &&
-              typeof cached === "object" &&
-              "timestamp" in cached &&
-              ("data" in cached || "errorData" in cached) &&
-              !("iv" in cached && Array.isArray(cached.iv));
-            if (isPlainCache) {
-              decrypted = cached;
-            } else if (
-              cached.iv &&
-              Array.isArray(cached.iv) &&
-              typeof cached.data === "string"
-            ) {
-              try {
-                decrypted = await decryptData(cached, ENC_KEY_PASSPHRASE);
-              } catch (decryptError) {
-                console.warn("缓存解密失败，将重新拉取:", decryptError);
-                clearDataChunks(CACHE_KEY);
-                decrypted = null;
-              }
-            } else {
-              decrypted = null;
-            }
-
-            if (decrypted && (decrypted.timestamp == null || Date.now() - decrypted.timestamp < CACHE_TTL)) {
-              allData = decrypted.data;
-              errorData = decrypted.errorData ?? [];
-              console.log("✅ 从缓存加载数据成功");
-              updateUI();
-              restorePageState(
-                currentScrollPosition,
-                currentActiveTab,
-                currentItemDetailModal
-              );
-              showLoading(false);
-              if (refreshBtn) {
-                refreshBtn.disabled = false;
-                refreshBtn.textContent = "🔄 刷新数据";
-              }
-              return;
-            }
-          } catch (error) {
-            console.warn("缓存数据解析失败，清除缓存:", error);
-            clearDataChunks(CACHE_KEY);
-            cacheFailureCount++;
-          }
+        if (
+          cached &&
+          typeof cached === "object" &&
+          Array.isArray(cached.data)
+        ) {
+          baseData = cached.data;
+          baseError = cached.errorData ?? [];
         }
+      } catch (e) {
+        console.warn("读取缓存失败:", e);
       }
     }
 
-    // 无缓存或增量不可用：全量请求
+    const maxCreatedAt =
+      baseData && baseData.length ? getMaxCreatedAt(baseData) : null;
+    const maxErrorAt =
+      baseError && baseError.length ? getMaxCreatedAt(baseError) : null;
+
+    if (maxCreatedAt != null && cacheEnabled) {
+      console.log("📥 从缓存往后增量拉取（created_at >", maxCreatedAt, "）...");
+      const { data: newData, error: err } = await fetchAllData(
+        supabase,
+        TABLE_NAME,
+        1000,
+        maxCreatedAt
+      );
+      const {
+        data: newErrorData,
+        error: errFetch,
+      } = await fetchAllData(
+        supabase,
+        TABLE_NAME_ERROR,
+        1000,
+        maxErrorAt || maxCreatedAt
+      );
+      if (err) throw new Error(`数据获取失败: ${err.message}`);
+      if (errFetch) throw new Error(`错误数据获取失败: ${errFetch.message}`);
+
+      const twoMonthsAgo = new Date();
+      twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+      const twoMonthsAgoISO = twoMonthsAgo.toISOString();
+      const merge = (newRows, baseRows) => {
+        const newIds = new Set((newRows || []).map((d) => d.id));
+        const merged = [
+          ...(newRows || []),
+          ...(baseRows || []).filter((d) => !newIds.has(d.id)),
+        ].filter((d) => d.created_at >= twoMonthsAgoISO);
+        merged.sort(
+          (a, b) => new Date(b.created_at) - new Date(a.created_at)
+        );
+        return merged;
+      };
+
+      allData = merge(newData || [], baseData);
+      errorData = merge(newErrorData || [], baseError);
+      console.log(
+        "✅ 增量合并完成，主表:",
+        allData.length,
+        "条，错误表:",
+        errorData.length,
+        "条"
+      );
+
+      const cacheData = {
+        timestamp: Date.now(),
+        data: allData,
+        errorData: errorData,
+      };
+      const result = storeDataInChunks(cacheData, CACHE_KEY);
+      if (result.success) {
+        try {
+          localStorage.setItem(CACHE_KEY + "_ts", String(Date.now()));
+        } catch (_) {}
+        cacheFailureCount = 0;
+      }
+      updateUI();
+      restorePageState(
+        currentScrollPosition,
+        currentActiveTab,
+        currentItemDetailModal
+      );
+      showLoading(false);
+      if (refreshBtn) {
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = "🔄 刷新数据";
+      }
+      return;
+    }
+
+    // 无缓存或缓存无有效数据：全量请求
     const { data, error } = await fetchAllData(supabase, TABLE_NAME);
     const { data: errorDataResult, error: errorFetch } = await fetchAllData(
       supabase,
@@ -301,54 +333,30 @@ async function loadData(forceRefresh = false) {
     console.log("✅ 数据加载成功，记录数:", allData.length);
     console.log("✅ 数据加载成功，保存到缓存");
 
-    // 保存缓存 - 使用分块存储避免配额超限
     if (cacheEnabled) {
       const cacheData = {
         timestamp: Date.now(),
         data: data,
-        errorData: errorDataResult || [], // 使用正确的变量名
+        errorData: errorDataResult || [],
       };
-
-      // 先尝试加密，如果失败则使用分块存储
-      try {
-        const encrypted = await encryptData(cacheData, ENC_KEY_PASSPHRASE);
-        const result = storeDataInChunks(encrypted, CACHE_KEY);
-        if (result.success) {
+      const result = storeDataInChunks(cacheData, CACHE_KEY);
+      if (result.success) {
+        try {
           localStorage.setItem(CACHE_KEY + "_ts", String(Date.now()));
-          console.log(`✅ 缓存保存成功，使用 ${result.chunks} 个分块`);
-          cacheFailureCount = 0; // 重置失败计数
-        } else {
-          console.warn("⚠️ 分块存储失败，跳过缓存:", result.error);
-          if (
-            result.error.includes("QuotaExceededError") ||
-            result.error.includes("配额超限")
-          ) {
-            showMessage(
-              "存储空间不足，已跳过缓存。建议清除浏览器数据。",
-              "warning"
-            );
-          }
-        }
-      } catch (error) {
-        console.warn("⚠️ 数据加密失败，尝试直接分块存储:", error);
-        const result = storeDataInChunks(cacheData, CACHE_KEY);
-        if (result.success) {
-          localStorage.setItem(CACHE_KEY + "_ts", String(Date.now()));
-          console.log(
-            `✅ 缓存保存成功（未加密），使用 ${result.chunks} 个分块`
+        } catch (_) {}
+        console.log(`✅ 缓存保存成功，${result.chunks} 个分块`);
+        cacheFailureCount = 0;
+      } else {
+        console.warn("⚠️ 分块存储失败:", result.error);
+        if (
+          result.error &&
+          (result.error.includes("QuotaExceededError") ||
+            result.error.includes("配额超限"))
+        ) {
+          showMessage(
+            "存储空间不足，已跳过缓存。建议清除浏览器数据。",
+            "warning"
           );
-          cacheFailureCount = 0; // 重置失败计数
-        } else {
-          console.warn("⚠️ 分块存储失败，跳过缓存:", result.error);
-          if (
-            result.error.includes("QuotaExceededError") ||
-            result.error.includes("配额超限")
-          ) {
-            showMessage(
-              "存储空间不足，已跳过缓存。建议清除浏览器数据。",
-              "warning"
-            );
-          }
         }
       }
     } else {
@@ -573,42 +581,17 @@ async function updateCache() {
   if (cacheEnabled) {
     const CACHE_KEY = "dashboard_data_cache";
     const cached = retrieveDataFromChunks(CACHE_KEY);
-    if (cached) {
+    if (cached && typeof cached === "object" && Array.isArray(cached.data)) {
       try {
-        let decrypted;
-        // 尝试解密数据
-        try {
-          decrypted = await decryptData(cached, ENC_KEY_PASSPHRASE);
-        } catch (decryptError) {
-          // 如果解密失败，可能是未加密的数据
-          decrypted = cached;
-        }
-
-        decrypted.errorData = errorData; // 更新缓存中的 errorData
-
-        // 使用分块存储更新缓存
-        try {
-          const encrypted = await encryptData(decrypted, ENC_KEY_PASSPHRASE);
-          const result = storeDataInChunks(encrypted, CACHE_KEY);
-          if (result.success) {
+        cached.errorData = errorData;
+        const result = storeDataInChunks(cached, CACHE_KEY);
+        if (result.success) {
+          try {
             localStorage.setItem(CACHE_KEY + "_ts", String(Date.now()));
-            console.log(`✅ 缓存更新成功，使用 ${result.chunks} 个分块`);
-            cacheFailureCount = 0; // 重置失败计数
-          } else {
-            console.warn("⚠️ 缓存更新失败:", result.error);
-          }
-        } catch (error) {
-          console.warn("⚠️ 缓存加密失败，尝试直接分块存储:", error);
-          const result = storeDataInChunks(decrypted, CACHE_KEY);
-          if (result.success) {
-            localStorage.setItem(CACHE_KEY + "_ts", String(Date.now()));
-            console.log(
-              `✅ 缓存更新成功（未加密），使用 ${result.chunks} 个分块`
-            );
-            cacheFailureCount = 0; // 重置失败计数
-          } else {
-            console.warn("⚠️ 缓存更新失败:", result.error);
-          }
+          } catch (_) {}
+          cacheFailureCount = 0;
+        } else {
+          console.warn("⚠️ 缓存更新失败:", result.error);
         }
       } catch (error) {
         console.error("缓存更新失败:", error);
