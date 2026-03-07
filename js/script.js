@@ -3627,29 +3627,24 @@ function storeDataInChunks(data, baseKey, maxChunkSize = 500000) {
         return { success: false, error: storageError.message };
       }
     } else {
-      // 数据太大，需要分块
-      const chunks = chunkData(
-        data,
-        Math.ceil(data.length / Math.ceil(compressed.length / maxChunkSize))
-      );
+      // 数据太大：对压缩后的字符串分块存储（兼容对象/数组）
+      const stringChunks = [];
+      for (let i = 0; i < compressed.length; i += maxChunkSize) {
+        stringChunks.push(compressed.slice(i, i + maxChunkSize));
+      }
 
       try {
-        // 存储分块信息
         const chunkInfo = {
-          totalChunks: chunks.length,
+          totalChunks: stringChunks.length,
           totalSize: compressed.length,
           timestamp: Date.now(),
+          format: "stringChunks",
         };
-
         localStorage.setItem(`${baseKey}_info`, JSON.stringify(chunkInfo));
-
-        // 存储每个分块
-        chunks.forEach((chunk, index) => {
-          const chunkData = compressData(chunk);
-          localStorage.setItem(`${baseKey}_chunk_${index}`, chunkData);
+        stringChunks.forEach((str, index) => {
+          localStorage.setItem(`${baseKey}_chunk_${index}`, str);
         });
-
-        return { success: true, chunks: chunks.length };
+        return { success: true, chunks: stringChunks.length };
       } catch (storageError) {
         if (handleStorageError(storageError, "存储分块数据")) {
           return { success: false, error: "存储失败" };
@@ -3678,9 +3673,18 @@ function retrieveDataFromChunks(baseKey) {
     }
 
     const info = JSON.parse(chunkInfo);
-    const chunks = [];
 
-    // 读取所有分块
+    if (info.format === "stringChunks" && info.totalChunks > 0) {
+      let full = "";
+      for (let i = 0; i < info.totalChunks; i++) {
+        const part = localStorage.getItem(`${baseKey}_chunk_${i}`);
+        if (!part) throw new Error(`分块 ${i} 数据丢失`);
+        full += part;
+      }
+      return decompressData(full);
+    }
+
+    const chunks = [];
     for (let i = 0; i < info.totalChunks; i++) {
       const chunkData = localStorage.getItem(`${baseKey}_chunk_${i}`);
       if (chunkData) {
@@ -3689,8 +3693,6 @@ function retrieveDataFromChunks(baseKey) {
         throw new Error(`分块 ${i} 数据丢失`);
       }
     }
-
-    // 合并分块数据
     return chunks.flat();
   } catch (error) {
     if (isStorageBlocked(error)) {
