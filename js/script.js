@@ -3364,22 +3364,23 @@ function updatePingChart() {
       const avgPing = Number(r.average_ping);
       const maxPing = Number(r.max_ping);
       if (!byDay[day]) {
-        byDay[day] = { sumAvg: 0, count: 0, max: 0 };
+        byDay[day] = { sumAvg: 0, countAvg: 0, sumMax: 0, countMax: 0 };
       }
       if (!Number.isNaN(avgPing)) {
         byDay[day].sumAvg += avgPing;
-        byDay[day].count += 1;
+        byDay[day].countAvg += 1;
       }
-      if (!Number.isNaN(maxPing) && maxPing > byDay[day].max) {
-        byDay[day].max = maxPing;
+      if (!Number.isNaN(maxPing)) {
+        byDay[day].sumMax += maxPing;
+        byDay[day].countMax += 1;
       }
     });
 
     const rows = Object.entries(byDay)
       .map(([day, v]) => ({
         day,
-        avg: v.count > 0 ? Math.round(v.sumAvg / v.count) : 0,
-        max: v.max,
+        avg: v.countAvg > 0 ? Math.round(v.sumAvg / v.countAvg) : 0,
+        max: v.countMax > 0 ? Math.round(v.sumMax / v.countMax) : 0,
       }))
       .sort((a, b) => a.day.localeCompare(b.day));
 
@@ -3392,7 +3393,7 @@ function updatePingChart() {
     const maxVal = Math.max(...rows.map((r) => r.max), 1);
     let html = '<div class="ping-chart-container">';
     html += "<h3>📶 每日 Ping 统计（所有玩家）</h3>";
-    html += '<div class="ping-chart-legend">日均 ping（蓝） / 日最大 ping（橙）</div>';
+    html += '<div class="ping-chart-legend">日均 ping（蓝） / 日最大 ping 的平均（橙）</div>';
     html += '<div class="ping-day-list">';
 
     rows.forEach(({ day, avg, max }) => {
@@ -3406,7 +3407,7 @@ function updatePingChart() {
               <div class="ping-bar ping-bar-avg" style="width: ${avgW}%"></div>
               <span class="ping-ms">${avg}</span>
             </div>
-            <div class="ping-bar-wrap" title="最大: ${max} ms">
+            <div class="ping-bar-wrap" title="最大 ping 的平均: ${max} ms">
               <div class="ping-bar ping-bar-max" style="width: ${maxW}%"></div>
               <span class="ping-ms">${max}</span>
             </div>
