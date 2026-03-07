@@ -35,8 +35,20 @@ function shouldDisableCache() {
   return false;
 }
 
+function isStorageBlocked(error) {
+  return (
+    error.name === "SecurityError" ||
+    (error.message && /tracking|blocked|storage/i.test(error.message))
+  );
+}
+
 // 增强的存储错误处理
 function handleStorageError(error, operation) {
+  if (isStorageBlocked(error)) {
+    console.warn(`存储被拦截 (${operation})，已禁用缓存:`, error.message);
+    disableCache();
+    return false;
+  }
   if (error.name === "QuotaExceededError") {
     console.error(`存储配额超限 (${operation}):`, error);
     cacheFailureCount++;
@@ -68,12 +80,16 @@ function handleStorageError(error, operation) {
   }
 }
 
+let appContentShown = false;
+
 // 显示应用内容
 function showAppContent() {
   document.getElementById("login-container").classList.add("hidden");
   document.getElementById("app-container").classList.remove("hidden");
 
-  // 初始化应用的其他部分
+  if (appContentShown) return;
+  appContentShown = true;
+
   refreshBtn = document.getElementById("refreshBtn");
   loadingDiv = document.getElementById("loading");
   errorDiv = document.getElementById("error");
@@ -84,6 +100,7 @@ function showAppContent() {
 
 // 显示登录表单
 function showLoginForm() {
+  appContentShown = false;
   document.getElementById("login-container").classList.remove("hidden");
   document.getElementById("app-container").classList.add("hidden");
 
@@ -103,10 +120,13 @@ document.addEventListener("DOMContentLoaded", function () {
   loadingDiv = document.getElementById("loading");
   errorDiv = document.getElementById("error");
 
-  // 初始化Supabase认证状态监听器
+  // 初始化Supabase认证状态监听器（仅当前在登录页时才切换，避免与 getSession 重复触发 loadData）
   initAuthStateListener((isLoggedIn) => {
     if (isLoggedIn) {
-      showAppContent();
+      const appContainer = document.getElementById("app-container");
+      if (appContainer && appContainer.classList.contains("hidden")) {
+        showAppContent();
+      }
     } else {
       showLoginForm();
     }
@@ -266,7 +286,7 @@ async function loadData(forceRefresh = false) {
       }
     }
 
-    // 请求 Supabase 数据
+    // 无缓存或增量不可用：全量请求
     const { data, error } = await fetchAllData(supabase, TABLE_NAME);
     const { data: errorDataResult, error: errorFetch } = await fetchAllData(
       supabase,
@@ -384,29 +404,53 @@ async function loadData(forceRefresh = false) {
   }
 }
 
-async function fetchAllData(supabase, tableName, batchSize = 1000) {
+/** 从记录数组中取最大 created_at（用于增量拉取） */
+function getMaxCreatedAt(rows) {
+  if (!rows || !rows.length) return null;
+  return rows.reduce(
+    (max, r) => (r.created_at > max ? r.created_at : max),
+    rows[0].created_at
+  );
+}
+
+async function fetchAllData(supabase, tableName, batchSize = 1000, createdAfter = null) {
   const allData = [];
   let page = 0;
 
-  // 计算近两个月的起始时间（ISO 格式）
   const twoMonthsAgo = new Date();
   twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
   const twoMonthsAgoISO = twoMonthsAgo.toISOString();
 
-  console.log(`📥 开始读取表 ${tableName} 的近两个月数据（自 ${twoMonthsAgoISO} 起）...`);
+  const isIncremental = !!createdAfter;
+  const dateFilter = isIncremental
+    ? { op: "gt", value: createdAfter }
+    : { op: "gte", value: twoMonthsAgoISO };
 
+  console.log(
+    isIncremental
+      ? `📥 增量读取表 ${tableName}（created_at > ${createdAfter}）...`
+      : `📥 全量读取表 ${tableName} 近两个月（自 ${twoMonthsAgoISO} 起）...`
+  );
+
+  let cursor = null;
   while (true) {
-    const from = page * batchSize;
-    const to = from + batchSize - 1;
-
-    const { data, error } = await supabase
+    let q = supabase
       .from(tableName)
       .select("*")
-      // ⚠️ 时间过滤条件：仅取 created_at >= 两个月前
-      .gte("created_at", twoMonthsAgoISO)
       .order("created_at", { ascending: false })
       .order("id", { ascending: false })
-      .range(from, to);
+      .limit(batchSize);
+
+    if (cursor) {
+      q = q.lt("created_at", cursor.created_at);
+    } else {
+      q =
+        dateFilter.op === "gt"
+          ? q.gt("created_at", dateFilter.value)
+          : q.gte("created_at", dateFilter.value);
+    }
+
+    const { data, error } = await q;
 
     if (error) {
       console.error(`❌ 第 ${page + 1} 页查询出错:`, error.message);
@@ -426,6 +470,8 @@ async function fetchAllData(supabase, tableName, batchSize = 1000) {
       break;
     }
 
+    const last = data[data.length - 1];
+    cursor = { created_at: last.created_at, id: last.id };
     page++;
   }
 
@@ -3526,7 +3572,11 @@ function retrieveDataFromChunks(baseKey) {
     // 合并分块数据
     return chunks.flat();
   } catch (error) {
-    console.error("读取分块数据失败:", error);
+    if (isStorageBlocked(error)) {
+      handleStorageError(error, "读取缓存");
+    } else {
+      console.error("读取分块数据失败:", error);
+    }
     return null;
   }
 }
@@ -3547,7 +3597,11 @@ function clearDataChunks(baseKey) {
     // 清除主键（如果存在）
     localStorage.removeItem(baseKey);
   } catch (error) {
-    console.error("清除分块数据失败:", error);
+    if (isStorageBlocked(error)) {
+      handleStorageError(error, "清除缓存");
+    } else {
+      console.error("清除分块数据失败:", error);
+    }
   }
 }
 
