@@ -2,12 +2,14 @@ import {
   supabase,
   TABLE_NAME,
   TABLE_NAME_ERROR,
+  TABLE_NAME_PING,
 } from "./config.js";
 import { initAuthStateListener, setupAuthForms } from "./auth.js";
 
 // 全局变量
 let allData = [];
 let errorData = [];
+let pingData = [];
 
 // DOM 元素
 let refreshBtn, loadingDiv, errorDiv;
@@ -284,11 +286,18 @@ async function loadData(forceRefresh = false) {
 
       allData = merge(newData || [], baseData);
       errorData = merge(newErrorData || [], baseError);
+      const { data: pingResult } = await fetchAllData(
+        supabase,
+        TABLE_NAME_PING
+      );
+      pingData = pingResult || [];
       console.log(
         "✅ 增量合并完成，主表:",
         allData.length,
         "条，错误表:",
         errorData.length,
+        "条，Ping:",
+        pingData.length,
         "条"
       );
 
@@ -330,8 +339,17 @@ async function loadData(forceRefresh = false) {
 
     allData = data;
     errorData = errorDataResult || [];
-    console.log("✅ 数据加载成功，记录数:", allData.length);
-    console.log("✅ 数据加载成功，保存到缓存");
+    const { data: pingResult } = await fetchAllData(
+      supabase,
+      TABLE_NAME_PING
+    );
+    pingData = pingResult || [];
+    console.log(
+      "✅ 数据加载成功，记录数:",
+      allData.length,
+      "，Ping:",
+      pingData.length
+    );
 
     if (cacheEnabled) {
       const cacheData = {
@@ -705,6 +723,9 @@ function updateUI() {
           break;
         case "time":
           updateTimeAnalysis();
+          break;
+        case "ping":
+          updatePingChart();
           break;
         case "errors":
           updateErrorReport();
@@ -1587,10 +1608,13 @@ function updatePlayerList() {
 
     let html = '<div class="player-list-container">';
     html += "<h3>👥 玩家统计</h3>";
-
-    if (Object.keys(playerStats).length === 0) {
+    const totalPlayers = Object.keys(playerStats).length;
+    if (totalPlayers === 0) {
       html += '<div class="no-data">没有找到有效的玩家数据</div>';
     } else {
+      if (totalPlayers > 100) {
+        html += `<p class="player-tip">共 ${totalPlayers} 名玩家，仅显示前 100 名</p>`;
+      }
       html += '<div class="table-container">';
       html += '<table class="player-table">';
       html +=
@@ -1599,6 +1623,7 @@ function updatePlayerList() {
 
       Object.entries(playerStats)
         .sort((a, b) => b[1].count - a[1].count)
+        .slice(0, 100)
         .forEach(([playerId, stats]) => {
           const lastSeen = new Date(stats.lastSeen).toLocaleString("zh-CN");
           html += `
@@ -3284,6 +3309,86 @@ function updateTimeAnalysis() {
   } catch (error) {
     console.error("时间分析更新失败:", error);
     timeContent.innerHTML = '<div class="error">时间数据加载失败</div>';
+  }
+}
+
+// 更新 Ping 图表：按日汇总所有玩家 ping
+function updatePingChart() {
+  const pingContent = document.getElementById("ping-content");
+  if (!pingContent) return;
+
+  if (!pingData || pingData.length === 0) {
+    pingContent.innerHTML =
+      '<div class="no-data">暂无 Ping 数据，请确保 ping_selection 表有数据</div>';
+    return;
+  }
+
+  try {
+    const byDay = {};
+    pingData.forEach((r) => {
+      const t = r.created_at;
+      if (!t) return;
+      const day = t.slice(0, 10);
+      const avgPing = Number(r.average_ping);
+      const maxPing = Number(r.max_ping);
+      if (!byDay[day]) {
+        byDay[day] = { sumAvg: 0, count: 0, max: 0 };
+      }
+      if (!Number.isNaN(avgPing)) {
+        byDay[day].sumAvg += avgPing;
+        byDay[day].count += 1;
+      }
+      if (!Number.isNaN(maxPing) && maxPing > byDay[day].max) {
+        byDay[day].max = maxPing;
+      }
+    });
+
+    const rows = Object.entries(byDay)
+      .map(([day, v]) => ({
+        day,
+        avg: v.count > 0 ? Math.round(v.sumAvg / v.count) : 0,
+        max: v.max,
+      }))
+      .sort((a, b) => a.day.localeCompare(b.day));
+
+    if (rows.length === 0) {
+      pingContent.innerHTML =
+        '<div class="no-data">无法解析 Ping 数据（需含 average_ping / max_ping / created_at）</div>';
+      return;
+    }
+
+    const maxVal = Math.max(...rows.map((r) => r.max), 1);
+    let html = '<div class="ping-chart-container">';
+    html += "<h3>📶 每日 Ping 统计（所有玩家）</h3>";
+    html += '<div class="ping-chart-legend">日均 ping（蓝） / 日最大 ping（橙）</div>';
+    html += '<div class="ping-day-list">';
+
+    rows.forEach(({ day, avg, max }) => {
+      const avgW = maxVal > 0 ? (avg / maxVal) * 100 : 0;
+      const maxW = maxVal > 0 ? (max / maxVal) * 100 : 0;
+      html += `
+        <div class="ping-day-row">
+          <div class="ping-day-label">${day}</div>
+          <div class="ping-bars">
+            <div class="ping-bar-wrap" title="日均: ${avg} ms">
+              <div class="ping-bar ping-bar-avg" style="width: ${avgW}%"></div>
+              <span class="ping-ms">${avg}</span>
+            </div>
+            <div class="ping-bar-wrap" title="最大: ${max} ms">
+              <div class="ping-bar ping-bar-max" style="width: ${maxW}%"></div>
+              <span class="ping-ms">${max}</span>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    html += "</div></div>";
+    pingContent.innerHTML = html;
+    console.log("✅ Ping 图表更新完成");
+  } catch (error) {
+    console.error("Ping 图表更新失败:", error);
+    pingContent.innerHTML = '<div class="error">Ping 数据加载失败</div>';
   }
 }
 
