@@ -2663,6 +2663,12 @@ body {
   gap: 25px;
 }
 
+.error-report-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 /* 报错统计样式 */
 .error-stats {
   background: #f8f9fa;
