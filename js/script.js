@@ -21,6 +21,8 @@ const MAX_CACHE_FAILURES = 3;
 const DATA_FETCH_BATCH_SIZE = 500;
 const MAX_FETCH_RETRIES = 3;
 const FETCH_RETRY_BASE_DELAY_MS = 600;
+const DASHBOARD_CACHE_KEY = "dashboard_data_cache";
+let backgroundDataLoadToken = 0;
 
 // 禁用缓存函数
 function disableCache() {
@@ -226,15 +228,13 @@ async function loadData(forceRefresh = false) {
     refreshBtn.textContent = "🔄 加载中...";
   }
 
-  const CACHE_KEY = "dashboard_data_cache";
-
   try {
     let baseData = null,
       baseError = null,
       basePing = null;
     if (cacheEnabled) {
       try {
-        const cached = retrieveDataFromChunks(CACHE_KEY);
+        const cached = retrieveDataFromChunks(DASHBOARD_CACHE_KEY);
         if (
           cached &&
           typeof cached === "object" &&
@@ -249,13 +249,22 @@ async function loadData(forceRefresh = false) {
       }
     }
 
-    // 重新打开或普通进入：有缓存就优先用缓存，不请求
-    if (!forceRefresh && baseData !== null) {
-      allData = baseData;
+    if (baseData !== null || baseError !== null || basePing !== null) {
+      allData = baseData ?? [];
       errorData = baseError ?? [];
       pingData = basePing ?? [];
+      updateUI();
+      restorePageState(
+        currentScrollPosition,
+        currentActiveTab,
+        currentItemDetailModal
+      );
+    }
+
+    // 重新打开或普通进入：有缓存就优先显示缓存，后台刷新报错报告与主数据
+    if (!forceRefresh && baseData !== null) {
       console.log(
-        "✅ 使用缓存，跳过请求（主表:",
+        "✅ 使用缓存优先渲染（主表:",
         allData.length,
         "，错误表:",
         errorData.length,
@@ -263,17 +272,13 @@ async function loadData(forceRefresh = false) {
         pingData.length,
         "）"
       );
-      updateUI();
-      restorePageState(
-        currentScrollPosition,
-        currentActiveTab,
-        currentItemDetailModal
-      );
       showLoading(false);
       if (refreshBtn) {
         refreshBtn.disabled = false;
         refreshBtn.textContent = "🔄 刷新数据";
       }
+      refreshErrorReportInBackground(baseError, baseData, basePing);
+      loadDataInBackground(baseData, baseError, basePing);
       return;
     }
 
@@ -282,149 +287,35 @@ async function loadData(forceRefresh = false) {
     const maxErrorAt =
       baseError && baseError.length ? getMaxCreatedAt(baseError) : null;
 
-    if (maxCreatedAt != null && cacheEnabled) {
-      console.log("📥 从缓存往后增量拉取（created_at >", maxCreatedAt, "）...");
-      const { data: newData, error: err } = await fetchAllData(
-        supabase,
-        TABLE_NAME,
-        DATA_FETCH_BATCH_SIZE,
-        maxCreatedAt
-      );
-      const {
-        data: newErrorData,
-        error: errFetch,
-      } = await fetchAllData(
-        supabase,
-        TABLE_NAME_ERROR,
-        DATA_FETCH_BATCH_SIZE,
-        maxErrorAt || maxCreatedAt
-      );
-      if (err) throw new Error(`数据获取失败: ${err.message}`);
-      if (errFetch) throw new Error(`错误数据获取失败: ${errFetch.message}`);
-
-      const twoMonthsAgo = new Date();
-      twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
-      const twoMonthsAgoISO = twoMonthsAgo.toISOString();
-      const merge = (newRows, baseRows) => {
-        const newIds = new Set((newRows || []).map((d) => d.id));
-        const merged = [
-          ...(newRows || []),
-          ...(baseRows || []).filter((d) => !newIds.has(d.id)),
-        ].filter((d) => d.created_at >= twoMonthsAgoISO);
-        merged.sort(
-          (a, b) => new Date(b.created_at) - new Date(a.created_at)
-        );
-        return merged;
-      };
-
-      allData = merge(newData || [], baseData);
-      errorData = merge(newErrorData || [], baseError);
-      const { data: pingResult } = await fetchAllData(
-        supabase,
-        TABLE_NAME_PING
-      );
-      pingData = pingResult || [];
-      console.log(
-        "✅ 增量合并完成，主表:",
-        allData.length,
-        "条，错误表:",
-        errorData.length,
-        "条，Ping:",
-        pingData.length,
-        "条"
-      );
-
-      const cacheData = {
-        timestamp: Date.now(),
-        data: allData,
-        errorData: errorData,
-        pingData: pingData,
-      };
-      const result = storeDataInChunks(cacheData, CACHE_KEY);
-      if (result.success) {
-        try {
-          localStorage.setItem(CACHE_KEY + "_ts", String(Date.now()));
-        } catch (_) {}
-        cacheFailureCount = 0;
-      }
-      updateUI();
-      restorePageState(
-        currentScrollPosition,
-        currentActiveTab,
-        currentItemDetailModal
-      );
-      showLoading(false);
-      if (refreshBtn) {
-        refreshBtn.disabled = false;
-        refreshBtn.textContent = "🔄 刷新数据";
-      }
-      return;
-    }
-
-    // 无缓存或缓存无有效数据：全量请求
-    const { data, error } = await fetchAllData(supabase, TABLE_NAME);
-    const { data: errorDataResult, error: errorFetch } = await fetchAllData(
-      supabase,
-      TABLE_NAME_ERROR
-    );
-    if (error) throw new Error(`数据获取失败: ${error.message}`);
-    if (errorFetch) throw new Error(`错误数据获取失败: ${errorFetch.message}`);
-    if (!data || data.length === 0) throw new Error("没有获取到任何数据");
-
-    allData = data;
-    errorData = errorDataResult || [];
-    const { data: pingResult } = await fetchAllData(
-      supabase,
-      TABLE_NAME_PING
-    );
-    pingData = pingResult || [];
-    console.log(
-      "✅ 数据加载成功，记录数:",
-      allData.length,
-      "，Ping:",
-      pingData.length
-    );
-
-    if (cacheEnabled) {
-      const cacheData = {
-        timestamp: Date.now(),
-        data: data,
-        errorData: errorDataResult || [],
-        pingData: pingData,
-      };
-      const result = storeDataInChunks(cacheData, CACHE_KEY);
-      if (result.success) {
-        try {
-          localStorage.setItem(CACHE_KEY + "_ts", String(Date.now()));
-        } catch (_) {}
-        console.log(`✅ 缓存保存成功，${result.chunks} 个分块`);
-        cacheFailureCount = 0;
-      } else {
-        console.warn("⚠️ 分块存储失败:", result.error);
-        if (
-          result.error &&
-          (result.error.includes("QuotaExceededError") ||
-            result.error.includes("配额超限"))
-        ) {
-          showMessage(
-            "存储空间不足，已跳过缓存。建议清除浏览器数据。",
-            "warning"
-          );
-        }
-      }
-    } else {
-      console.log("⚠️ 缓存已禁用，跳过数据缓存");
-    }
-
+    await loadErrorReportData(maxErrorAt || null);
     updateUI();
     restorePageState(
       currentScrollPosition,
       currentActiveTab,
       currentItemDetailModal
     );
+
+    showLoading(false);
+    if (refreshBtn) {
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = "🔄 刷新数据";
+    }
+
+    loadDataInBackground(
+      Array.isArray(allData) ? allData : [],
+      Array.isArray(errorData) ? errorData : [],
+      Array.isArray(pingData) ? pingData : [],
+      maxCreatedAt
+    );
+
   } catch (error) {
     console.error("❌ 数据加载失败:", error);
-    showError(error.message);
+    showMessage(`数据加载失败: ${error.message}`, "warning");
+    if (!errorData || errorData.length === 0) {
+      showError(error.message);
+    } else {
+      updateUI();
+    }
   } finally {
     showLoading(false);
     if (refreshBtn) {
@@ -472,6 +363,162 @@ function getMaxCreatedAt(rows) {
     (max, r) => (r.created_at > max ? r.created_at : max),
     rows[0].created_at
   );
+}
+
+function mergeRowsById(newRows, baseRows) {
+  const twoMonthsAgo = new Date();
+  twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+  const twoMonthsAgoISO = twoMonthsAgo.toISOString();
+  const newIds = new Set((newRows || []).map((d) => d.id));
+  const merged = [
+    ...(newRows || []),
+    ...(baseRows || []).filter((d) => !newIds.has(d.id)),
+  ].filter((d) => !d.created_at || d.created_at >= twoMonthsAgoISO);
+
+  merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  return merged;
+}
+
+async function loadErrorReportData(createdAfter = null) {
+  console.log("📥 优先加载报错报告数据...");
+  const { data, error } = await fetchAllData(
+    supabase,
+    TABLE_NAME_ERROR,
+    DATA_FETCH_BATCH_SIZE,
+    createdAfter
+  );
+
+  if (error) {
+    const message = `错误数据获取失败: ${error.message}`;
+    console.error("❌", message);
+    if (errorData && errorData.length > 0) {
+      showMessage("报错报告刷新失败，已保留当前可用数据", "warning");
+      return;
+    }
+    throw new Error(message);
+  }
+
+  errorData =
+    createdAfter && errorData && errorData.length > 0
+      ? mergeRowsById(data || [], errorData)
+      : data || [];
+  console.log("✅ 报错报告数据可用，记录数:", errorData.length);
+}
+
+async function refreshErrorReportInBackground(baseError = [], baseData = [], basePing = []) {
+  const maxErrorAt =
+    baseError && baseError.length ? getMaxCreatedAt(baseError) : null;
+
+  try {
+    await loadErrorReportData(maxErrorAt);
+    updateUI();
+    saveDashboardCache(baseData || allData, errorData, basePing || pingData);
+  } catch (error) {
+    console.warn("报错报告后台刷新失败，保留缓存数据:", error.message);
+    if (!baseError || baseError.length === 0) {
+      showMessage("报错报告刷新失败，请稍后重试", "warning");
+    }
+  }
+}
+
+function saveDashboardCache(data = allData, errors = errorData, ping = pingData) {
+  if (!cacheEnabled) {
+    console.log("⚠️ 缓存已禁用，跳过数据缓存");
+    return;
+  }
+
+  const cacheData = {
+    timestamp: Date.now(),
+    data: data || [],
+    errorData: errors || [],
+    pingData: ping || [],
+  };
+  const result = storeDataInChunks(cacheData, DASHBOARD_CACHE_KEY);
+  if (result.success) {
+    try {
+      localStorage.setItem(DASHBOARD_CACHE_KEY + "_ts", String(Date.now()));
+    } catch (_) {}
+    console.log(`✅ 缓存保存成功，${result.chunks} 个分块`);
+    cacheFailureCount = 0;
+    return;
+  }
+
+  console.warn("⚠️ 分块存储失败:", result.error);
+  if (
+    result.error &&
+    (result.error.includes("QuotaExceededError") ||
+      result.error.includes("配额超限"))
+  ) {
+    showMessage("存储空间不足，已跳过缓存。建议清除浏览器数据。", "warning");
+  }
+}
+
+async function loadDataInBackground(
+  baseData = [],
+  baseError = [],
+  basePing = [],
+  maxCreatedAtOverride = null
+) {
+  const token = ++backgroundDataLoadToken;
+  const maxCreatedAt =
+    maxCreatedAtOverride ||
+    (baseData && baseData.length ? getMaxCreatedAt(baseData) : null);
+
+  console.log("📥 主数据和 Ping 将在后台继续加载...");
+
+  try {
+    const { data, error } = await fetchAllData(
+      supabase,
+      TABLE_NAME,
+      DATA_FETCH_BATCH_SIZE,
+      maxCreatedAt
+    );
+
+    if (token !== backgroundDataLoadToken) {
+      console.log("后台数据加载结果已过期，跳过应用");
+      return;
+    }
+
+    if (error) {
+      throw new Error(`数据获取失败: ${error.message}`);
+    }
+
+    allData =
+      maxCreatedAt && baseData && baseData.length > 0
+        ? mergeRowsById(data || [], baseData)
+        : data || [];
+
+    const { data: pingResult, error: pingError } = await fetchAllData(
+      supabase,
+      TABLE_NAME_PING
+    );
+
+    if (token !== backgroundDataLoadToken) {
+      console.log("后台 Ping 加载结果已过期，跳过应用");
+      return;
+    }
+
+    if (pingError) {
+      console.warn("Ping 数据后台加载失败:", pingError.message);
+      pingData = basePing || [];
+    } else {
+      pingData = pingResult || [];
+    }
+
+    saveDashboardCache(allData, errorData.length ? errorData : baseError, pingData);
+    updateUI();
+    console.log(
+      "✅ 后台数据加载完成，主表:",
+      allData.length,
+      "条，Ping:",
+      pingData.length,
+      "条"
+    );
+  } catch (error) {
+    console.error("后台数据加载失败:", error);
+    showMessage("报错报告已可用，主数据仍在后台加载或等待下次刷新", "warning");
+    saveDashboardCache(baseData || [], errorData.length ? errorData : baseError, basePing || []);
+  }
 }
 
 async function fetchAllData(
@@ -671,15 +718,14 @@ async function updateCache() {
 
   // 更新缓存
   if (cacheEnabled) {
-    const CACHE_KEY = "dashboard_data_cache";
-    const cached = retrieveDataFromChunks(CACHE_KEY);
+    const cached = retrieveDataFromChunks(DASHBOARD_CACHE_KEY);
     if (cached && typeof cached === "object" && Array.isArray(cached.data)) {
       try {
         cached.errorData = errorData;
-        const result = storeDataInChunks(cached, CACHE_KEY);
+        const result = storeDataInChunks(cached, DASHBOARD_CACHE_KEY);
         if (result.success) {
           try {
-            localStorage.setItem(CACHE_KEY + "_ts", String(Date.now()));
+            localStorage.setItem(DASHBOARD_CACHE_KEY + "_ts", String(Date.now()));
           } catch (_) {}
           cacheFailureCount = 0;
         } else {
@@ -692,6 +738,8 @@ async function updateCache() {
           showMessage("缓存功能已禁用，将直接从服务器加载数据", "warning");
         }
       }
+    } else {
+      saveDashboardCache(allData, errorData, pingData);
     }
     console.log("报错状态已保存到缓存");
   } else {
@@ -829,7 +877,14 @@ function updateErrorReport() {
   }
 
   if (!errorData || errorData.length === 0) {
-    errorContent.innerHTML = '<div class="no-data">暂无报错数据</div>';
+    errorContent.innerHTML = `
+      <div class="error-report-container">
+        <div class="error-report-actions">
+          <button type="button" class="btn btn-sm btn-success export-errors-btn" disabled>📥 下载报错报告</button>
+        </div>
+        <div class="no-data">暂无报错数据</div>
+      </div>
+    `;
     return;
   }
 
@@ -879,6 +934,9 @@ function updateErrorReport() {
     }).length;
 
     html += `
+      <div class="error-report-actions">
+        <button type="button" class="btn btn-sm btn-success export-errors-btn">📥 下载报错报告</button>
+      </div>
       <div class="error-stats">
         <h3>📊 报错统计</h3>
         <p>总数: ${totalErrors} | 独特错误: ${uniqueErrors} | 已解决: ${solvedErrors} | 未解决: ${
@@ -1338,13 +1396,15 @@ function bindErrorEvents() {
   }
 
   const newHandler = function (e) {
-    const btn = e.target.closest(".toggle-status-btn, .add-note-btn, .delete-error-btn, .delete-group-btn");
+    const btn = e.target.closest(".toggle-status-btn, .add-note-btn, .delete-error-btn, .delete-group-btn, .export-errors-btn");
     if (!btn) return;
 
     e.preventDefault();
     e.stopPropagation();
 
-    if (btn.classList.contains("toggle-status-btn")) {
+    if (btn.classList.contains("export-errors-btn")) {
+      exportErrorReport();
+    } else if (btn.classList.contains("toggle-status-btn")) {
       const index = parseInt(btn.getAttribute("data-index"));
       toggleErrorStatus(index);
     } else if (btn.classList.contains("add-note-btn")) {
@@ -3512,9 +3572,91 @@ function showError(message = "数据加载失败，请检查配置并重试") {
   showLoading(false);
 }
 
+function csvCell(value) {
+  const text = value == null ? "" : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function exportErrorReport() {
+  if (!errorData || errorData.length === 0) {
+    alert("没有报错报告可以导出");
+    return;
+  }
+
+  try {
+    const csvData = [];
+    csvData.push([
+      "时间",
+      "玩家ID",
+      "状态",
+      "错误信息",
+      "堆栈跟踪",
+      "批注",
+      "记录ID",
+    ]);
+
+    errorData.forEach((record) => {
+      try {
+        const parsedData =
+          typeof record.data === "string" ? JSON.parse(record.data) : record.data;
+        const time = record.created_at
+          ? new Date(record.created_at).toLocaleString("zh-CN")
+          : "";
+
+        csvData.push([
+          time,
+          parsedData?.playerid || parsedData?.PlayerId || "未知用户",
+          parsedData?.isSolved ? "已解决" : "未解决",
+          parsedData?.message || "未知错误",
+          parsedData?.stackTrace || "",
+          parsedData?.note || "",
+          record.id || "",
+        ]);
+      } catch (error) {
+        console.warn("报错报告导出解析失败:", error);
+      }
+    });
+
+    const csvContent = csvData
+      .map((row) => row.map((field) => csvCell(field)).join(","))
+      .join("\n");
+
+    const blob = new Blob(["\ufeff" + csvContent], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+
+    link.setAttribute("href", url);
+    link.setAttribute(
+      "download",
+      `报错报告_${new Date().toISOString().slice(0, 10)}.csv`
+    );
+    link.style.visibility = "hidden";
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    console.log("✅ 报错报告导出成功");
+  } catch (error) {
+    console.error("❌ 报错报告导出失败:", error);
+    alert("报错报告导出失败: " + error.message);
+  }
+}
+
 // 导出数据功能
 function exportData() {
   if (!allData || allData.length === 0) {
+    const activeTab = document
+      .querySelector(".tab-btn.active")
+      ?.getAttribute("data-tab");
+    if (activeTab === "errors" && errorData && errorData.length > 0) {
+      exportErrorReport();
+      return;
+    }
+
     alert("没有数据可以导出");
     return;
   }
@@ -3566,6 +3708,7 @@ function exportData() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 
     console.log("✅ 数据导出成功");
   } catch (error) {
@@ -3576,6 +3719,7 @@ function exportData() {
 
 // 全局导出函数
 window.exportData = exportData;
+window.exportErrorReport = exportErrorReport;
 window.loadData = loadData;
 window.closeItemDetail = closeItemDetail;
 // 错误处理
@@ -3773,7 +3917,7 @@ function clearDataChunks(baseKey) {
 // 清除缓存函数
 function clearCache() {
   try {
-    clearDataChunks("dashboard_data_cache");
+    clearDataChunks(DASHBOARD_CACHE_KEY);
     console.log("✅ 缓存已清除");
 
     // 重新启用缓存
