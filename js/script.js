@@ -18,6 +18,9 @@ let refreshBtn, loadingDiv, errorDiv;
 let cacheEnabled = true;
 let cacheFailureCount = 0;
 const MAX_CACHE_FAILURES = 3;
+const DATA_FETCH_BATCH_SIZE = 500;
+const MAX_FETCH_RETRIES = 3;
+const FETCH_RETRY_BASE_DELAY_MS = 600;
 
 // 禁用缓存函数
 function disableCache() {
@@ -284,7 +287,7 @@ async function loadData(forceRefresh = false) {
       const { data: newData, error: err } = await fetchAllData(
         supabase,
         TABLE_NAME,
-        1000,
+        DATA_FETCH_BATCH_SIZE,
         maxCreatedAt
       );
       const {
@@ -293,7 +296,7 @@ async function loadData(forceRefresh = false) {
       } = await fetchAllData(
         supabase,
         TABLE_NAME_ERROR,
-        1000,
+        DATA_FETCH_BATCH_SIZE,
         maxErrorAt || maxCreatedAt
       );
       if (err) throw new Error(`数据获取失败: ${err.message}`);
@@ -471,7 +474,12 @@ function getMaxCreatedAt(rows) {
   );
 }
 
-async function fetchAllData(supabase, tableName, batchSize = 1000, createdAfter = null) {
+async function fetchAllData(
+  supabase,
+  tableName,
+  batchSize = DATA_FETCH_BATCH_SIZE,
+  createdAfter = null
+) {
   const allData = [];
   let page = 0;
 
@@ -500,15 +508,16 @@ async function fetchAllData(supabase, tableName, batchSize = 1000, createdAfter 
       .limit(batchSize);
 
     if (cursor) {
-      q = q.lt("created_at", cursor.created_at);
+      q = q
+        .or(
+          `created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`
+        )
+        .filter("created_at", dateFilter.op, dateFilter.value);
     } else {
-      q =
-        dateFilter.op === "gt"
-          ? q.gt("created_at", dateFilter.value)
-          : q.gte("created_at", dateFilter.value);
+      q = q.filter("created_at", dateFilter.op, dateFilter.value);
     }
 
-    const { data, error } = await q;
+    const { data, error } = await runPagedQueryWithRetry(q, tableName, page + 1);
 
     if (error) {
       console.error(`❌ 第 ${page + 1} 页查询出错:`, error.message);
@@ -534,6 +543,39 @@ async function fetchAllData(supabase, tableName, batchSize = 1000, createdAfter 
   }
 
   return { data: allData, error: null };
+}
+
+async function runPagedQueryWithRetry(query, tableName, pageNumber) {
+  let lastResult = null;
+
+  for (let attempt = 1; attempt <= MAX_FETCH_RETRIES; attempt++) {
+    const result = await query;
+    lastResult = result;
+
+    if (!result.error || !isRetryableFetchError(result.error)) {
+      return result;
+    }
+
+    if (attempt < MAX_FETCH_RETRIES) {
+      const delay = FETCH_RETRY_BASE_DELAY_MS * attempt;
+      console.warn(
+        `⚠️ ${tableName} 第 ${pageNumber} 页网络异常，${delay}ms 后重试 (${attempt}/${MAX_FETCH_RETRIES})`,
+        result.error.message
+      );
+      await delayMs(delay);
+    }
+  }
+
+  return lastResult;
+}
+
+function isRetryableFetchError(error) {
+  const message = `${error?.message || ""} ${error?.details || ""}`;
+  return /Failed to fetch|NetworkError|Load failed|QUIC|ERR_/i.test(message);
+}
+
+function delayMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // 恢复页面状态

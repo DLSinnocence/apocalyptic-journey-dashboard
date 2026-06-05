@@ -1,0 +1,44 @@
+{
+  "sessions": {
+    "019e96cb-38eb-7ff0-a23d-6433bd3c1810": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|{\"title\":\"修复数据拉取失败\"}",
+        "first_seen_at": "2026-06-05T07:59:37.057Z",
+        "last_seen_at": "2026-06-05T07:59:37.057Z",
+        "repeat_count": 1,
+        "last_turn_id": "019e96cb-395c-7761-9e32-02ebd82d4f0c",
+        "last_thread_id": null
+      }
+    },
+    "019e96ca-c7d6-7421-93d4-dff4c514c54f": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|{\"suggestions\":[]}",
+        "first_seen_at": "2026-06-05T08:01:46.009Z",
+        "last_seen_at": "2026-06-05T08:01:46.009Z",
+        "repeat_count": 1,
+        "last_turn_id": "019e96ca-c82c-7883-a89f-dff57e9941c6",
+        "last_thread_id": null
+      }
+    },
+    "019e96ca-f3a4-77e2-8212-f833671b4557": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|原因找到了：不是 supabase 单纯挂了，而是分页逻辑有 bug。 第一页查询会限制“近两个月”，但第二页开始只剩 `created_at < 上页最后时间`，把“两个月下限”丢了。所以数据一多触发分页后，就会一路把更早的历史数据也拉下来，响应越来越大，最后浏览器网络层报 `err_quic_protocol_error / failed to fetch`。控制台里看到 `200 (ok)` 也不矛盾：服务端可能返回了 200，但 quic 传输/响应读取阶段断了，js 的 `fetch` 还是失败。 我已经改了 [js/script.js](d:/workspace/web/game-analytics/js/script.js:21)： - 单页批量从 `1000` 降到 `500`，减少大响应触发网络层失败的概率。 - 翻页时每一页都保留时间窗口过滤，不会再无限拉历史数据。 - 游标改成 `created_at + id`，避免同一时间戳的数据漏掉。 - 对 `failed to fetch / quic / err_` 这类瞬时网络错误加了 3 次重试。 验证过： - `node --check ./js/script.js` 通过。 - 新的 supabase/postgrest 游标查询语法返回 `200 ok`，服务端能接受。",
+        "first_seen_at": "2026-06-05T08:03:47.320Z",
+        "last_seen_at": "2026-06-05T08:03:47.320Z",
+        "repeat_count": 1,
+        "last_turn_id": "019e96cb-3686-7841-8773-0a06f4827d89",
+        "last_thread_id": null
+      }
+    },
+    "019e96d0-e27f-7ea0-9845-b1414679fc59": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|{\"message\":\"fix paged supabase fetches and retry transient errors\"}",
+        "first_seen_at": "2026-06-05T08:05:43.262Z",
+        "last_seen_at": "2026-06-05T08:05:43.262Z",
+        "repeat_count": 1,
+        "last_turn_id": "019e96d0-e2d6-77c3-9607-b6302b19ced7",
+        "last_thread_id": null
+      }
+    }
+  }
+}
