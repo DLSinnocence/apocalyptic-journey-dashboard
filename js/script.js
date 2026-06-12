@@ -441,10 +441,17 @@ async function callDashboardDataFunction(body) {
 
   if (!response.ok) {
     let message = "服务端数据计算失败";
+    let rawBody = "";
     try {
-      const errorBody = await response.json();
-      message = errorBody.error || message;
+      rawBody = await response.text();
+      const errorBody = rawBody ? JSON.parse(rawBody) : null;
+      message = errorBody?.error || errorBody?.message || rawBody || message;
     } catch (_) {}
+    console.error("Edge Function 调用失败:", {
+      status: response.status,
+      statusText: response.statusText,
+      body: rawBody,
+    });
     throw new Error(message);
   }
 
