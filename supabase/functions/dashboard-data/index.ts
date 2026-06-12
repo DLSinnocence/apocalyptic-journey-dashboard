@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 const TABLE_NAME = "save_selection";
 const TABLE_NAME_ERROR = "error_selection";
 const TABLE_NAME_PING = "ping_selection";
-const PAGE_SIZE = 1000;
+const PAGE_SIZE = 500;
 const DEFAULT_ERROR_PAGE_SIZE = 100;
 const MAX_ERROR_PAGE_SIZE = 500;
 const PLAYER_LIMIT = 100;
@@ -218,8 +218,6 @@ async function fetchAllRows(
 
     if (!data || data.length === 0) break;
     allRows.push(...(data as Record<string, unknown>[]));
-
-    if (data.length < PAGE_SIZE) break;
 
     const last = data[data.length - 1] as Record<string, unknown>;
     cursor = {

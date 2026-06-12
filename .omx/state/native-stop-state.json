@@ -102,11 +102,11 @@
     },
     "019ebc45-6480-7a42-a8e7-3e2e929401e8": {
       "ordinary_no_progress_guard": {
-        "fingerprint": "ordinary|处理好了，这次按你的意思改对了： - 主仪表盘数据不再分页返回。`dashboard-data` 会在 edge function 内部按批次扫完近两个月 `save_selection` / `ping_selection`，服务端算好后一次返回完整聚合结果。 - 只有报错明细分页。首屏只返回一页报错记录，报错页里用“加载更多报错”继续取下一页。 - 报错统计现在显示“已加载 / 总数”，不会再把 `500` 这种分页大小误当成总记录数。 - 物品详情也撤掉了分页按钮，改回服务端完整计算后返回。 - 临时 supabase pat 已删除。 - `dashboard-data` 已重新部署成功。 验证： - `node --check js\\script.js` 通过。 - 搜过残留，`加载更多主数据 / 已汇总 / dashboardcursor / loadmoredashboard` 这些都没了。 - 未登录请求 edge function 返回缺少授权头，说明不会裸返回数据。",
-        "first_seen_at": "2026-06-12T17:38:14.463Z",
-        "last_seen_at": "2026-06-12T17:38:14.463Z",
+        "fingerprint": "ordinary|抓到原因了：supabase 那边单次 `.limit(1000)` 实际只回了 `500`，之前代码看到 `500 < 1000` 就误判“已经最后一页”，所以主统计总记录数还是 500。 我已经修了并重新部署： - edge function 内部批次大小改成 `500`。 - `fetchallrows()` 不再用 `data.length < page_size` 判断结束，而是一直按 cursor 翻页，直到返回 `0` 条才停止。 - 前端缓存 key 改成 `dashboard_data_cache_v2`，不会再读旧的 `500` 聚合缓存。 - 临时 supabase token 已删除。 - `dashboard-data` 已重新部署成功。 - `node --check js\\script.js` 通过。 你现在刷新页面应该就不是 500 了。若浏览器还显示旧值，点一下页面上的“清除缓存”或强刷即可，不过我已经换了缓存 key，正常刷新就会走新结果。",
+        "first_seen_at": "2026-06-12T19:41:07.544Z",
+        "last_seen_at": "2026-06-12T19:41:07.544Z",
         "repeat_count": 1,
-        "last_turn_id": "019ebcde-0039-7af2-936c-85e9e3e1ecc0",
+        "last_turn_id": "019ebd56-9d08-7451-9d82-16359c596847",
         "last_thread_id": null
       }
     }
