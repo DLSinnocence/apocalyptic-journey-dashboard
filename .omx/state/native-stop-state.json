@@ -39,6 +39,76 @@
         "last_turn_id": "019e96d0-e2d6-77c3-9607-b6302b19ced7",
         "last_thread_id": null
       }
+    },
+    "019e989d-0740-7810-ad6d-e8db03d07573": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|{\"suggestions\":[]}",
+        "first_seen_at": "2026-06-05T16:30:48.199Z",
+        "last_seen_at": "2026-06-05T16:30:48.199Z",
+        "repeat_count": 1,
+        "last_turn_id": "019e989d-0792-7da2-8f14-3b41a6e0078b",
+        "last_thread_id": null
+      }
+    },
+    "019e98bc-ff58-72f3-95fe-080384756de0": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|{\"title\":\"修复报错报告下载\"}",
+        "first_seen_at": "2026-06-05T17:03:13.248Z",
+        "last_seen_at": "2026-06-05T17:03:13.248Z",
+        "repeat_count": 1,
+        "last_turn_id": "019e98bc-ffa7-7522-8346-8ba9abad9f94",
+        "last_thread_id": null
+      }
+    },
+    "019e98bc-9229-7350-aed3-1cfbc8230a9e": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|pushed to `origin/main`. commit: `21652a6 keep error reports available when analytics queries timeout` i only committed `css/style.css` and `js/script.js`; the existing `.omx` local state changes are still unstaged. github also reported the repo has moved to `dlsinnocence/apocalyptic-journey-dashboard.git`, but the push to the current remote still succeeded. ::git-stage{cwd=\"d:\\workspace\\web\\game-analytics\"} ::git-commit{cwd=\"d:\\workspace\\web\\game-analytics\"} ::git-push{cwd=\"d:\\workspace\\web\\game-analytics\" branch=\"main\"}",
+        "first_seen_at": "2026-06-05T17:22:16.842Z",
+        "last_seen_at": "2026-06-05T17:22:16.842Z",
+        "repeat_count": 1,
+        "last_turn_id": "019e98cd-2bb4-7cd3-bdd0-acb60244f30f",
+        "last_thread_id": null
+      }
+    },
+    "019ea76a-e9eb-70a0-9f3f-5be29a79a1a7": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|{\"suggestions\":[{\"appid\":\"\",\"description\":\"your june 6 validation explicitly left this unverified because the preset login returned `invalid login credentials`, and `index.html` still ships hardcoded placeholder creds. codex can remove the misleading defaults and make the login/export path testable again without relying on fake credentials.\",\"prompt\":\"fix the broken preset login flow in this dashboard. remove the hardcoded placeholder credentials from the login form, improve the login error ux so failed supabase auth is actionable, and make the authenticated report-download path easier to verify locally. keep the existing static-app structure.\",\"title\":\"fix the invalid preset login blocking report export checks\"},{\"appid\":\"\",\"description\":\"the latest main-branch change now keeps error reports available while long analytics queries continue in the background, but the ui does not clearly show when reports are fresh and the rest of the dashboard is still cached or stale. codex can add a clear dataset freshness/status indicator so you can trust what you are seeing during triage.\",\"prompt\":\"add explicit freshness and loading status to the dashboard after the recent timeout fallback changes. show when error reports are fresh, when main analytics or ping data are still loading in the background, and when the page is serving cached data versus live data. keep the current visual style and wire it into the existing loaddata/background refresh flow.\",\"title\":\"show when reports are fresh but analytics data is still stale\"}]}",
+        "first_seen_at": "2026-06-08T13:29:58.261Z",
+        "last_seen_at": "2026-06-08T13:29:58.261Z",
+        "repeat_count": 1,
+        "last_turn_id": "019ea76a-ea46-7d83-b211-2e3d8e394e34",
+        "last_thread_id": null
+      }
+    },
+    "019ebc45-d0e8-7782-9b45-132bac4d65c1": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|{\"title\":\"将csv全量下载移至edge function\"}",
+        "first_seen_at": "2026-06-12T14:39:30.277Z",
+        "last_seen_at": "2026-06-12T14:39:30.277Z",
+        "repeat_count": 1,
+        "last_turn_id": "019ebc45-e9a3-77c1-b3c4-15c3b39c5108",
+        "last_thread_id": null
+      }
+    },
+    "019ebc45-e9bc-7183-a3a5-1aab6ffe2850": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|{\"suggestions\":[]}",
+        "first_seen_at": "2026-06-12T14:40:45.681Z",
+        "last_seen_at": "2026-06-12T14:40:45.681Z",
+        "repeat_count": 1,
+        "last_turn_id": "019ebc46-035d-7971-9af5-0a0b6b077beb",
+        "last_thread_id": null
+      }
+    },
+    "019ebc45-6480-7a42-a8e7-3e2e929401e8": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|已改成“只分页获取”。 现在行为是： - `dashboard-data` 每次只读一页，默认 `500` 条，最多 `1000` 条。 - edge function 返回当前页聚合结果 + `pagination.nextcursor` + `pagination.hasmore`。 - 前端首屏只加载第一页。 - 页面会显示“已汇总 x 条主数据，还有更多/已到末页”，并提供“加载更多数据”按钮。 - 点“加载更多数据”才请求下一页，并把新页的统计结果合并进当前仪表板。 - 物品详情也改成分页：先算第一页详情，弹窗内可继续加载详情数据。 - 部署用临时 pat 已删除。 - `dashboard-data` 分页版已重新部署。 验证： - `node --check js\\script.js` 通过。 - 冒烟请求 `dashboard-data` 带 `pagesize: 1` 返回 200，响应包含 `pagination.hasmore / nextcursor / pagesize` 结构。 - 没有 `export-csv` / pat 残留引用。",
+        "first_seen_at": "2026-06-12T17:01:30.022Z",
+        "last_seen_at": "2026-06-12T17:01:30.022Z",
+        "repeat_count": 1,
+        "last_turn_id": "019ebcbe-7f7e-7f83-8d1d-2da314020253",
+        "last_thread_id": null
+      }
     }
   }
 }

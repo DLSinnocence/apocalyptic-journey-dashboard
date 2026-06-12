@@ -1,15 +1,22 @@
 import {
   supabase,
-  TABLE_NAME,
+  BASE_URL,
+  API_KEY,
   TABLE_NAME_ERROR,
-  TABLE_NAME_PING,
+  DASHBOARD_DATA_FUNCTION_NAME,
 } from "./config.js";
 import { initAuthStateListener, setupAuthForms } from "./auth.js";
 
 // 全局变量
-let allData = [];
 let errorData = [];
-let pingData = [];
+let dashboardData = null;
+let dashboardCursor = null;
+let dashboardHasMore = false;
+let dashboardLoadingMore = false;
+let currentItemDetailData = null;
+let currentItemDetailCursor = null;
+let currentItemDetailHasMore = false;
+let currentItemDetailLoadingMore = false;
 
 // DOM 元素
 let refreshBtn, loadingDiv, errorDiv;
@@ -18,11 +25,8 @@ let refreshBtn, loadingDiv, errorDiv;
 let cacheEnabled = true;
 let cacheFailureCount = 0;
 const MAX_CACHE_FAILURES = 3;
-const DATA_FETCH_BATCH_SIZE = 500;
-const MAX_FETCH_RETRIES = 3;
-const FETCH_RETRY_BASE_DELAY_MS = 600;
 const DASHBOARD_CACHE_KEY = "dashboard_data_cache";
-let backgroundDataLoadToken = 0;
+const DASHBOARD_PAGE_SIZE = 500;
 
 // 禁用缓存函数
 function disableCache() {
@@ -211,7 +215,6 @@ function initTabs() {
 async function loadData(forceRefresh = false) {
   console.log("=== 开始加载数据 ===");
 
-  // 保存当前页面状态
   const currentScrollPosition = window.scrollY;
   const currentActiveTab = document
     .querySelector(".tab-btn.active")
@@ -229,89 +232,49 @@ async function loadData(forceRefresh = false) {
   }
 
   try {
-    let baseData = null,
-      baseError = null,
-      basePing = null;
+    let cachedDashboard = null;
     if (cacheEnabled) {
       try {
         const cached = retrieveDataFromChunks(DASHBOARD_CACHE_KEY);
-        if (
-          cached &&
-          typeof cached === "object" &&
-          Array.isArray(cached.data)
-        ) {
-          baseData = cached.data;
-          baseError = cached.errorData ?? [];
-          basePing = Array.isArray(cached.pingData) ? cached.pingData : [];
+        if (cached && typeof cached === "object" && cached.dashboardData) {
+          cachedDashboard = cached.dashboardData;
+          dashboardCursor = cached.dashboardCursor || null;
+          dashboardHasMore = !!cached.dashboardHasMore;
         }
       } catch (e) {
         console.warn("读取缓存失败:", e);
       }
     }
 
-    if (baseData !== null || baseError !== null || basePing !== null) {
-      allData = baseData ?? [];
-      errorData = baseError ?? [];
-      pingData = basePing ?? [];
+    if (!forceRefresh && cachedDashboard) {
+      applyDashboardData(cachedDashboard);
       updateUI();
       restorePageState(
         currentScrollPosition,
         currentActiveTab,
         currentItemDetailModal
       );
-    }
-
-    // 重新打开或普通进入：有缓存就优先显示缓存，后台刷新报错报告与主数据
-    if (!forceRefresh && baseData !== null) {
-      console.log(
-        "✅ 使用缓存优先渲染（主表:",
-        allData.length,
-        "，错误表:",
-        errorData.length,
-        "，Ping:",
-        pingData.length,
-        "）"
-      );
       showLoading(false);
       if (refreshBtn) {
         refreshBtn.disabled = false;
         refreshBtn.textContent = "🔄 刷新数据";
       }
-      refreshErrorReportInBackground(baseError, baseData, basePing);
-      loadDataInBackground(baseData, baseError, basePing);
-      return;
+      console.log("✅ 使用服务端聚合缓存优先渲染");
     }
 
-    const maxCreatedAt =
-      baseData && baseData.length ? getMaxCreatedAt(baseData) : null;
-    const maxErrorAt =
-      baseError && baseError.length ? getMaxCreatedAt(baseError) : null;
-
-    await loadErrorReportData(maxErrorAt || null);
+    const freshDashboard = await fetchDashboardSummary(null);
+    applyDashboardData(freshDashboard);
+    saveDashboardCache();
     updateUI();
     restorePageState(
       currentScrollPosition,
       currentActiveTab,
       currentItemDetailModal
     );
-
-    showLoading(false);
-    if (refreshBtn) {
-      refreshBtn.disabled = false;
-      refreshBtn.textContent = "🔄 刷新数据";
-    }
-
-    loadDataInBackground(
-      Array.isArray(allData) ? allData : [],
-      Array.isArray(errorData) ? errorData : [],
-      Array.isArray(pingData) ? pingData : [],
-      maxCreatedAt
-    );
-
   } catch (error) {
     console.error("❌ 数据加载失败:", error);
     showMessage(`数据加载失败: ${error.message}`, "warning");
-    if (!errorData || errorData.length === 0) {
+    if (!dashboardData && (!errorData || errorData.length === 0)) {
       showError(error.message);
     } else {
       updateUI();
@@ -379,49 +342,214 @@ function mergeRowsById(newRows, baseRows) {
   return merged;
 }
 
-async function loadErrorReportData(createdAfter = null) {
-  console.log("📥 优先加载报错报告数据...");
-  const { data, error } = await fetchAllData(
-    supabase,
-    TABLE_NAME_ERROR,
-    DATA_FETCH_BATCH_SIZE,
-    createdAfter
+function applyDashboardData(data) {
+  dashboardData = data || null;
+  dashboardCursor = data?.pagination?.nextCursor || null;
+  dashboardHasMore = !!data?.pagination?.hasMore;
+  errorData = data?.errors?.rows || [];
+}
+
+function mergeDashboardPage(nextPage) {
+  if (!dashboardData) {
+    applyDashboardData(nextPage);
+    return;
+  }
+
+  dashboardData.generatedAt = nextPage.generatedAt || dashboardData.generatedAt;
+  dashboardData.stats.totalRecords =
+    (dashboardData.stats.totalRecords || 0) + (nextPage.stats?.totalRecords || 0);
+  dashboardData.stats.lastUpdate =
+    dashboardData.stats.lastUpdate || nextPage.stats?.lastUpdate || null;
+
+  const existingPlayerIds = new Set(
+    (dashboardData.players?.rows || []).map((row) => row.playerId)
+  );
+  const playerMap = new Map(
+    (dashboardData.players?.rows || []).map((row) => [row.playerId, { ...row }])
+  );
+  (nextPage.players?.rows || []).forEach((row) => {
+    const current = playerMap.get(row.playerId);
+    if (!current) {
+      playerMap.set(row.playerId, { ...row });
+    } else {
+      current.count += row.count || 0;
+      if (row.lastSeen && row.lastSeen > current.lastSeen) {
+        current.lastSeen = row.lastSeen;
+      }
+    }
+  });
+  dashboardData.players = {
+    totalPlayers: playerMap.size,
+    rows: Array.from(playerMap.values())
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 100),
+  };
+  dashboardData.stats.activePlayers = playerMap.size || existingPlayerIds.size;
+
+  dashboardData.overview.totalRecords =
+    (dashboardData.overview.totalRecords || 0) + (nextPage.overview?.totalRecords || 0);
+  dashboardData.overview.activePlayers = dashboardData.stats.activePlayers;
+  dashboardData.overview.totalSelections =
+    (dashboardData.overview.totalSelections || 0) + (nextPage.overview?.totalSelections || 0);
+  dashboardData.overview.recentActivity = [
+    ...(dashboardData.overview.recentActivity || []),
+    ...(nextPage.overview?.recentActivity || []),
+  ]
+    .sort((a, b) => String(b.time).localeCompare(String(a.time)))
+    .slice(0, 10);
+
+  mergeItemStats(dashboardData.itemStats, nextPage.itemStats);
+  const topItems = buildTopItemsFromItemStats(dashboardData.itemStats);
+  dashboardData.overview.topItems = topItems.slice(0, 10);
+  dashboardData.overview.uniqueItemCount = topItems.length;
+
+  mergeTimeStats(dashboardData.time, nextPage.time);
+  dashboardData.ping = mergePingRows(dashboardData.ping || [], nextPage.ping || []);
+  dashboardData.errors = dashboardData.errors || { rows: [] };
+  dashboardData.errors.rows = mergeRowsById(
+    nextPage.errors?.rows || [],
+    dashboardData.errors?.rows || []
   );
 
-  if (error) {
-    const message = `错误数据获取失败: ${error.message}`;
-    console.error("❌", message);
-    if (errorData && errorData.length > 0) {
-      showMessage("报错报告刷新失败，已保留当前可用数据", "warning");
-      return;
+  dashboardCursor = nextPage.pagination?.nextCursor || null;
+  dashboardHasMore = !!nextPage.pagination?.hasMore;
+}
+
+function mergeItemStats(target, source) {
+  if (!source) return;
+  ["cards", "relics", "blessings", "hardTags"].forEach((type) => {
+    target[type] = target[type] || { show: {}, select: {}, buy: {} };
+    ["show", "select", "buy"].forEach((bucket) => {
+      target[type][bucket] = target[type][bucket] || {};
+      Object.entries(source[type]?.[bucket] || {}).forEach(([id, count]) => {
+        target[type][bucket][id] = (target[type][bucket][id] || 0) + count;
+      });
+    });
+  });
+}
+
+function buildTopItemsFromItemStats(itemStats) {
+  const counts = {};
+  Object.values(itemStats || {}).forEach((stats) => {
+    Object.entries(stats.select || {}).forEach(([id, count]) => {
+      counts[id] = (counts[id] || 0) + count;
+    });
+  });
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([id, count]) => ({ id, count }));
+}
+
+function mergeTimeStats(target, source) {
+  if (!source) return;
+  target.hourlyStats = target.hourlyStats || new Array(24).fill(0);
+  (source.hourlyStats || []).forEach((count, index) => {
+    target.hourlyStats[index] = (target.hourlyStats[index] || 0) + count;
+  });
+  target.weeklyStats = target.weeklyStats || {};
+  Object.entries(source.weeklyStats || {}).forEach(([day, count]) => {
+    target.weeklyStats[day] = (target.weeklyStats[day] || 0) + count;
+  });
+  const dailyMap = new Map((target.dailyStats || []).map((d) => [d.date, d.count]));
+  (source.dailyStats || []).forEach(({ date, count }) => {
+    dailyMap.set(date, (dailyMap.get(date) || 0) + count);
+  });
+  target.dailyStats = Array.from(dailyMap.entries())
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
+    .slice(0, 30);
+}
+
+function mergePingRows(targetRows, sourceRows) {
+  const map = new Map((targetRows || []).map((row) => [row.day, { ...row }]));
+  (sourceRows || []).forEach((row) => {
+    const current = map.get(row.day);
+    if (!current) {
+      map.set(row.day, { ...row });
+    } else {
+      current.avg = Math.round(((current.avg || 0) + (row.avg || 0)) / 2);
+      current.max = Math.max(current.max || 0, row.max || 0);
     }
+  });
+  return Array.from(map.values()).sort((a, b) => a.day.localeCompare(b.day));
+}
+
+async function loadMoreDashboardData() {
+  if (!dashboardHasMore || dashboardLoadingMore) return;
+  dashboardLoadingMore = true;
+  showMessage("正在加载下一页数据...", "info");
+
+  try {
+    const nextPage = await fetchDashboardSummary(dashboardCursor);
+    mergeDashboardPage(nextPage);
+    saveDashboardCache();
+    updateUI();
+    showMessage(dashboardHasMore ? "已加载下一页数据" : "全部分页数据已加载", "success");
+  } catch (error) {
+    console.error("加载下一页数据失败:", error);
+    showMessage("加载下一页失败: " + error.message, "error");
+  } finally {
+    dashboardLoadingMore = false;
+  }
+}
+
+async function fetchDashboardSummary(cursor = null) {
+  return callDashboardDataFunction({
+    mode: "summary",
+    cursor,
+    pageSize: DASHBOARD_PAGE_SIZE,
+  });
+}
+
+async function fetchDashboardItemDetail(itemId, cursor = null) {
+  return callDashboardDataFunction({
+    mode: "item-detail",
+    itemId,
+    cursor,
+    pageSize: DASHBOARD_PAGE_SIZE,
+  });
+}
+
+async function callDashboardDataFunction(body) {
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+
+  if (sessionError) {
+    throw new Error(sessionError.message || "获取登录状态失败");
+  }
+
+  if (!session?.access_token) {
+    throw new Error("登录状态已失效，请重新登录");
+  }
+
+  const response = await fetch(
+    `${BASE_URL}/functions/v1/${DASHBOARD_DATA_FUNCTION_NAME}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: API_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!response.ok) {
+    let message = "服务端数据计算失败";
+    try {
+      const errorBody = await response.json();
+      message = errorBody.error || message;
+    } catch (_) {}
     throw new Error(message);
   }
 
-  errorData =
-    createdAfter && errorData && errorData.length > 0
-      ? mergeRowsById(data || [], errorData)
-      : data || [];
-  console.log("✅ 报错报告数据可用，记录数:", errorData.length);
+  return response.json();
 }
 
-async function refreshErrorReportInBackground(baseError = [], baseData = [], basePing = []) {
-  const maxErrorAt =
-    baseError && baseError.length ? getMaxCreatedAt(baseError) : null;
-
-  try {
-    await loadErrorReportData(maxErrorAt);
-    updateUI();
-    saveDashboardCache(baseData || allData, errorData, basePing || pingData);
-  } catch (error) {
-    console.warn("报错报告后台刷新失败，保留缓存数据:", error.message);
-    if (!baseError || baseError.length === 0) {
-      showMessage("报错报告刷新失败，请稍后重试", "warning");
-    }
-  }
-}
-
-function saveDashboardCache(data = allData, errors = errorData, ping = pingData) {
+function saveDashboardCache(data = dashboardData) {
   if (!cacheEnabled) {
     console.log("⚠️ 缓存已禁用，跳过数据缓存");
     return;
@@ -429,9 +557,9 @@ function saveDashboardCache(data = allData, errors = errorData, ping = pingData)
 
   const cacheData = {
     timestamp: Date.now(),
-    data: data || [],
-    errorData: errors || [],
-    pingData: ping || [],
+    dashboardData: data || null,
+    dashboardCursor,
+    dashboardHasMore,
   };
   const result = storeDataInChunks(cacheData, DASHBOARD_CACHE_KEY);
   if (result.success) {
@@ -451,178 +579,6 @@ function saveDashboardCache(data = allData, errors = errorData, ping = pingData)
   ) {
     showMessage("存储空间不足，已跳过缓存。建议清除浏览器数据。", "warning");
   }
-}
-
-async function loadDataInBackground(
-  baseData = [],
-  baseError = [],
-  basePing = [],
-  maxCreatedAtOverride = null
-) {
-  const token = ++backgroundDataLoadToken;
-  const maxCreatedAt =
-    maxCreatedAtOverride ||
-    (baseData && baseData.length ? getMaxCreatedAt(baseData) : null);
-
-  console.log("📥 主数据和 Ping 将在后台继续加载...");
-
-  try {
-    const { data, error } = await fetchAllData(
-      supabase,
-      TABLE_NAME,
-      DATA_FETCH_BATCH_SIZE,
-      maxCreatedAt
-    );
-
-    if (token !== backgroundDataLoadToken) {
-      console.log("后台数据加载结果已过期，跳过应用");
-      return;
-    }
-
-    if (error) {
-      throw new Error(`数据获取失败: ${error.message}`);
-    }
-
-    allData =
-      maxCreatedAt && baseData && baseData.length > 0
-        ? mergeRowsById(data || [], baseData)
-        : data || [];
-
-    const { data: pingResult, error: pingError } = await fetchAllData(
-      supabase,
-      TABLE_NAME_PING
-    );
-
-    if (token !== backgroundDataLoadToken) {
-      console.log("后台 Ping 加载结果已过期，跳过应用");
-      return;
-    }
-
-    if (pingError) {
-      console.warn("Ping 数据后台加载失败:", pingError.message);
-      pingData = basePing || [];
-    } else {
-      pingData = pingResult || [];
-    }
-
-    saveDashboardCache(allData, errorData.length ? errorData : baseError, pingData);
-    updateUI();
-    console.log(
-      "✅ 后台数据加载完成，主表:",
-      allData.length,
-      "条，Ping:",
-      pingData.length,
-      "条"
-    );
-  } catch (error) {
-    console.error("后台数据加载失败:", error);
-    showMessage("报错报告已可用，主数据仍在后台加载或等待下次刷新", "warning");
-    saveDashboardCache(baseData || [], errorData.length ? errorData : baseError, basePing || []);
-  }
-}
-
-async function fetchAllData(
-  supabase,
-  tableName,
-  batchSize = DATA_FETCH_BATCH_SIZE,
-  createdAfter = null
-) {
-  const allData = [];
-  let page = 0;
-
-  const twoMonthsAgo = new Date();
-  twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
-  const twoMonthsAgoISO = twoMonthsAgo.toISOString();
-
-  const isIncremental = !!createdAfter;
-  const dateFilter = isIncremental
-    ? { op: "gt", value: createdAfter }
-    : { op: "gte", value: twoMonthsAgoISO };
-
-  console.log(
-    isIncremental
-      ? `📥 增量读取表 ${tableName}（created_at > ${createdAfter}）...`
-      : `📥 全量读取表 ${tableName} 近两个月（自 ${twoMonthsAgoISO} 起）...`
-  );
-
-  let cursor = null;
-  while (true) {
-    let q = supabase
-      .from(tableName)
-      .select("*")
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .limit(batchSize);
-
-    if (cursor) {
-      q = q
-        .or(
-          `created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`
-        )
-        .filter("created_at", dateFilter.op, dateFilter.value);
-    } else {
-      q = q.filter("created_at", dateFilter.op, dateFilter.value);
-    }
-
-    const { data, error } = await runPagedQueryWithRetry(q, tableName, page + 1);
-
-    if (error) {
-      console.error(`❌ 第 ${page + 1} 页查询出错:`, error.message);
-      return { data: null, error };
-    }
-
-    if (!data || data.length === 0) {
-      console.log(`✅ 数据读取完毕，共 ${allData.length} 条`);
-      break;
-    }
-
-    console.log(`📦 第 ${page + 1} 页：${data.length} 条`);
-    allData.push(...data);
-
-    if (data.length < batchSize) {
-      console.log(`✅ 已到最后一页，共 ${allData.length} 条`);
-      break;
-    }
-
-    const last = data[data.length - 1];
-    cursor = { created_at: last.created_at, id: last.id };
-    page++;
-  }
-
-  return { data: allData, error: null };
-}
-
-async function runPagedQueryWithRetry(query, tableName, pageNumber) {
-  let lastResult = null;
-
-  for (let attempt = 1; attempt <= MAX_FETCH_RETRIES; attempt++) {
-    const result = await query;
-    lastResult = result;
-
-    if (!result.error || !isRetryableFetchError(result.error)) {
-      return result;
-    }
-
-    if (attempt < MAX_FETCH_RETRIES) {
-      const delay = FETCH_RETRY_BASE_DELAY_MS * attempt;
-      console.warn(
-        `⚠️ ${tableName} 第 ${pageNumber} 页网络异常，${delay}ms 后重试 (${attempt}/${MAX_FETCH_RETRIES})`,
-        result.error.message
-      );
-      await delayMs(delay);
-    }
-  }
-
-  return lastResult;
-}
-
-function isRetryableFetchError(error) {
-  const message = `${error?.message || ""} ${error?.details || ""}`;
-  return /Failed to fetch|NetworkError|Load failed|QUIC|ERR_/i.test(message);
-}
-
-function delayMs(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // 恢复页面状态
@@ -719,9 +675,15 @@ async function updateCache() {
   // 更新缓存
   if (cacheEnabled) {
     const cached = retrieveDataFromChunks(DASHBOARD_CACHE_KEY);
-    if (cached && typeof cached === "object" && Array.isArray(cached.data)) {
+    if (
+      cached &&
+      typeof cached === "object" &&
+      cached.dashboardData &&
+      typeof cached.dashboardData === "object"
+    ) {
       try {
-        cached.errorData = errorData;
+        cached.dashboardData.errors = cached.dashboardData.errors || {};
+        cached.dashboardData.errors.rows = errorData;
         const result = storeDataInChunks(cached, DASHBOARD_CACHE_KEY);
         if (result.success) {
           try {
@@ -739,7 +701,11 @@ async function updateCache() {
         }
       }
     } else {
-      saveDashboardCache(allData, errorData, pingData);
+      if (dashboardData) {
+        dashboardData.errors = dashboardData.errors || {};
+        dashboardData.errors.rows = errorData;
+      }
+      saveDashboardCache();
     }
     console.log("报错状态已保存到缓存");
   } else {
@@ -861,9 +827,46 @@ function updateUI() {
       updateOverview();
     }
 
+    updatePaginationControls();
     console.log("✅ UI更新完成");
   } catch (error) {
     console.error("❌ UI更新失败:", error);
+  }
+}
+
+function updatePaginationControls() {
+  const mainContent = document.querySelector(".main-content");
+  if (!mainContent) return;
+
+  let controls = document.getElementById("dashboardPaginationControls");
+  if (!dashboardData) {
+    if (controls) controls.remove();
+    return;
+  }
+
+  if (!controls) {
+    controls = document.createElement("div");
+    controls.id = "dashboardPaginationControls";
+    controls.style.cssText =
+      "display:flex;gap:12px;align-items:center;justify-content:flex-end;margin:12px 0;";
+    mainContent.prepend(controls);
+  }
+
+  const loadedCount = dashboardData?.stats?.totalRecords || 0;
+  controls.innerHTML = `
+    <span class="pagination-status">已汇总 ${loadedCount.toLocaleString()} 条主数据${
+    dashboardHasMore ? "，还有更多" : "，已到末页"
+  }</span>
+    <button id="loadMoreDashboardBtn" class="btn btn-primary" ${
+      !dashboardHasMore || dashboardLoadingMore ? "disabled" : ""
+    }>
+      ${dashboardLoadingMore ? "加载中..." : "加载更多数据"}
+    </button>
+  `;
+
+  const btn = document.getElementById("loadMoreDashboardBtn");
+  if (btn) {
+    btn.addEventListener("click", loadMoreDashboardData);
   }
 }
 
@@ -1503,42 +1506,17 @@ function escapeHtml(text) {
 function updateStats() {
   console.log("=== 更新统计信息 ===");
 
-  if (!allData || allData.length === 0) {
+  if (!dashboardData?.stats) {
     console.log("没有数据");
     return;
   }
 
   try {
-    const totalRecords = allData.length;
-    const uniquePlayers = new Set();
-
-    // 统计唯一玩家
-    allData.forEach((record) => {
-      try {
-        let parsedData;
-        if (typeof record.data === "string") {
-          parsedData = JSON.parse(record.data);
-        } else {
-          parsedData = record.data;
-        }
-
-        if (parsedData && parsedData.PlayerId) {
-          uniquePlayers.add(parsedData.PlayerId);
-        }
-      } catch (e) {
-        console.warn("数据解析失败:", e);
-      }
-    });
-
-    // 获取最后更新时间
-    let lastUpdate = "无数据";
-    if (allData.length > 0 && allData[0].created_at) {
-      try {
-        lastUpdate = new Date(allData[0].created_at).toLocaleString("zh-CN");
-      } catch (e) {
-        lastUpdate = "时间格式错误";
-      }
-    }
+    const totalRecords = dashboardData.stats.totalRecords || 0;
+    const activePlayers = dashboardData.stats.activePlayers || 0;
+    const lastUpdate = dashboardData.stats.lastUpdate
+      ? new Date(dashboardData.stats.lastUpdate).toLocaleString("zh-CN")
+      : "无数据";
 
     // 更新DOM
     const totalElement = document.getElementById("totalRecords");
@@ -1551,8 +1529,8 @@ function updateStats() {
     }
 
     if (playersElement) {
-      playersElement.textContent = uniquePlayers.size.toLocaleString();
-      console.log("✅ 活跃玩家数已更新:", uniquePlayers.size);
+      playersElement.textContent = activePlayers.toLocaleString();
+      console.log("✅ 活跃玩家数已更新:", activePlayers);
     }
 
     if (updateElement) {
@@ -1574,76 +1552,36 @@ function updateOverview() {
     return;
   }
 
-  if (!allData || allData.length === 0) {
+  if (!dashboardData?.overview || dashboardData.overview.totalRecords === 0) {
     overviewContent.innerHTML = '<div class="no-data">暂无数据</div>';
     return;
   }
 
   try {
+    const overview = dashboardData.overview;
     let html = '<div class="overview-container">';
-
-    // 基本统计
-    const uniquePlayers = new Set();
-    let totalSelections = 0;
-    const itemCounts = {};
-
-    allData.forEach((record) => {
-      try {
-        let parsedData;
-        if (typeof record.data === "string") {
-          parsedData = JSON.parse(record.data);
-        } else {
-          parsedData = record.data;
-        }
-
-        if (parsedData) {
-          if (parsedData.PlayerId) {
-            uniquePlayers.add(parsedData.PlayerId);
-          }
-
-          // 统计各种选择
-          ["Cards", "Relics", "Blessings", "HardTags"].forEach((category) => {
-            if (parsedData[category] && parsedData[category].Select) {
-              parsedData[category].Select.forEach((item) => {
-                const itemId = item.Name || item;
-                itemCounts[itemId] = (itemCounts[itemId] || 0) + 1;
-                totalSelections++;
-              });
-            }
-          });
-        }
-      } catch (e) {
-        console.warn("数据解析失败:", e);
-      }
-    });
-
-    // 热门物品
-    const topItems = Object.entries(itemCounts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10);
 
     html += `
       <div class="overview-cards">
         <div class="info-card">
           <h3>📊 数据概览</h3>
           <ul>
-            <li>总记录数: <strong>${allData.length}</strong></li>
-            <li>活跃玩家: <strong>${uniquePlayers.size}</strong></li>
-            <li>总选择次数: <strong>${totalSelections}</strong></li>
-            <li>不同物品种类: <strong>${
-              Object.keys(itemCounts).length
-            }</strong></li>
+            <li>总记录数: <strong>${overview.totalRecords}</strong></li>
+            <li>活跃玩家: <strong>${overview.activePlayers}</strong></li>
+            <li>总选择次数: <strong>${overview.totalSelections}</strong></li>
+            <li>不同物品种类: <strong>${overview.uniqueItemCount}</strong></li>
           </ul>
         </div>
     `;
 
-    if (topItems.length > 0) {
+    if (overview.topItems && overview.topItems.length > 0) {
       html += `
         <div class="info-card">
           <h3>🔥 热门选择</h3>
           <ul>
       `;
-      topItems.forEach(([item, count]) => {
+      overview.topItems.forEach(({ id, count }) => {
+        const item = id;
         const itemName = formatItemName(item);
         html += `<li>${itemName}: <strong>${count}次</strong></li>`;
       });
@@ -1657,18 +1595,10 @@ function updateOverview() {
     html += "<h3>📝 最近活动</h3>";
     html += '<div class="activity-list">';
 
-    const recentRecords = allData.slice(0, 10);
-    recentRecords.forEach((record) => {
+    (overview.recentActivity || []).forEach((record) => {
       try {
-        const time = new Date(record.created_at).toLocaleString("zh-CN");
-        let parsedData;
-        if (typeof record.data === "string") {
-          parsedData = JSON.parse(record.data);
-        } else {
-          parsedData = record.data;
-        }
-
-        const playerId = parsedData?.PlayerId || "未知玩家";
+        const time = new Date(record.time).toLocaleString("zh-CN");
+        const playerId = record.playerId || "未知玩家";
         html += `
           <div class="activity-item">
             <div class="activity-time">${time}</div>
@@ -1701,48 +1631,15 @@ function updatePlayerList() {
     return;
   }
 
-  if (!allData || allData.length === 0) {
+  if (!dashboardData?.players || dashboardData.players.totalPlayers === 0) {
     playerContent.innerHTML = '<div class="no-data">暂无玩家数据</div>';
     return;
   }
 
   try {
-    const playerStats = {};
-
-    allData.forEach((record) => {
-      try {
-        let parsedData;
-        if (typeof record.data === "string") {
-          parsedData = JSON.parse(record.data);
-        } else {
-          parsedData = record.data;
-        }
-
-        if (parsedData && parsedData.PlayerId) {
-          const playerId = parsedData.PlayerId;
-          if (!playerStats[playerId]) {
-            playerStats[playerId] = {
-              count: 0,
-              lastSeen: record.created_at,
-            };
-          }
-          playerStats[playerId].count++;
-
-          if (
-            new Date(record.created_at) >
-            new Date(playerStats[playerId].lastSeen)
-          ) {
-            playerStats[playerId].lastSeen = record.created_at;
-          }
-        }
-      } catch (e) {
-        console.warn("玩家数据解析失败:", e);
-      }
-    });
-
     let html = '<div class="player-list-container">';
     html += "<h3>👥 玩家统计</h3>";
-    const totalPlayers = Object.keys(playerStats).length;
+    const totalPlayers = dashboardData.players.totalPlayers;
     if (totalPlayers === 0) {
       html += '<div class="no-data">没有找到有效的玩家数据</div>';
     } else {
@@ -1755,10 +1652,9 @@ function updatePlayerList() {
         "<thead><tr><th>玩家ID</th><th>游戏次数</th><th>最后活动</th></tr></thead>";
       html += "<tbody>";
 
-      Object.entries(playerStats)
-        .sort((a, b) => b[1].count - a[1].count)
-        .slice(0, 100)
-        .forEach(([playerId, stats]) => {
+      dashboardData.players.rows
+        .forEach(({ playerId, count, lastSeen: rawLastSeen }) => {
+          const stats = { count, lastSeen: rawLastSeen };
           const lastSeen = new Date(stats.lastSeen).toLocaleString("zh-CN");
           html += `
             <tr>
@@ -1792,7 +1688,7 @@ function updateCardAnalysis() {
     return;
   }
 
-  if (!allData || allData.length === 0) {
+  if (!dashboardData?.itemStats) {
     cardContent.innerHTML = '<div class="no-data">暂无数据</div>';
     return;
   }
@@ -1808,55 +1704,7 @@ function updateCardAnalysis() {
     const currentSortOrder =
       document.getElementById("sortOrderSelect")?.value || "desc";
 
-    // 统计所有物品类型的数据
-    const itemStats = {
-      cards: { show: {}, select: {}, buy: {} },
-      relics: { show: {}, select: {}, buy: {} },
-      blessings: { show: {}, select: {}, buy: {} },
-      hardTags: { show: {}, select: {}, buy: {} },
-    };
-
-    // 处理数据
-    allData.forEach((record, index) => {
-      try {
-        let parsedData;
-        if (typeof record.data === "string") {
-          parsedData = JSON.parse(record.data);
-        } else {
-          parsedData = record.data;
-        }
-
-        if (parsedData) {
-          // 处理卡牌数据
-          if (parsedData.Cards) {
-            processItemData(parsedData.Cards, itemStats.cards, "Cards");
-          }
-
-          // 处理遗物数据
-          if (parsedData.Relics) {
-            processItemData(parsedData.Relics, itemStats.relics, "Relics");
-          }
-
-          // 处理祝福数据
-          if (parsedData.Blessings) {
-            processItemData(
-              parsedData.Blessings,
-              itemStats.blessings,
-              "Blessings"
-            );
-          }
-          if (parsedData.HardTags) {
-            processItemData(
-              parsedData.HardTags,
-              itemStats.hardTags,
-              "HardTags"
-            );
-          }
-        }
-      } catch (e) {
-        console.warn(`记录 ${index} 数据解析失败:`, e);
-      }
-    });
+    const itemStats = dashboardData.itemStats;
 
     // 生成完整的分析界面，保持当前筛选状态
     const html = generateAnalysisHTML(itemStats, {
@@ -2464,186 +2312,98 @@ function createItemDetailModal(itemId, itemName) {
 
 // 加载物品详情数据
 // 简化加载物品详情数据函数
-function loadItemDetailData(itemId, itemName) {
+async function loadItemDetailData(itemId, itemName) {
   try {
     console.log(`开始分析物品: ${itemId}`);
-
-    // 初始化层数数据 (1-30层)
-    const layerData = {};
-    for (let i = 1; i <= 30; i++) {
-      layerData[i] = {
-        show: 0,
-        select: 0,
-        buy: 0,
-        total: 0,
-      };
-    }
-
-    let totalShow = 0,
-      totalSelect = 0,
-      totalBuy = 0;
-    let firstSeen = null,
-      lastSeen = null;
-
-    // 分析所有数据
-    allData.forEach((record, index) => {
-      try {
-        let parsedData;
-        if (typeof record.data === "string") {
-          parsedData = JSON.parse(record.data);
-        } else {
-          parsedData = record.data;
-        }
-
-        if (parsedData) {
-          // 检查是否包含目标物品
-          let foundInShow = false,
-            foundInSelect = false,
-            foundInBuy = false;
-          let currentLayer = 1; // 默认层数
-
-          // 检查各种数据结构
-          ["Cards", "Relics", "Blessings", "HardTags"].forEach((itemType) => {
-            if (parsedData[itemType]) {
-              const itemData = parsedData[itemType];
-
-              // 检查展示数据
-              ["RewardShow", "ShopShow", "Show"].forEach((showType) => {
-                if (itemData[showType] && Array.isArray(itemData[showType])) {
-                  itemData[showType].forEach((item) => {
-                    const currentItemId =
-                      typeof item === "object" ? item.Name || item : item;
-                    if (currentItemId === itemId) {
-                      // 获取层数信息 - 从底层物品中获取
-                      if (typeof item === "object") {
-                        currentLayer =
-                          item.Level || item.level || item.floor || 1;
-                      }
-                      foundInShow = true;
-                    }
-                  });
-                }
-              });
-
-              // 检查选择数据
-              ["Select", "Selected", "Picked"].forEach((selectType) => {
-                if (
-                  itemData[selectType] &&
-                  Array.isArray(itemData[selectType])
-                ) {
-                  itemData[selectType].forEach((item) => {
-                    const currentItemId =
-                      typeof item === "object" ? item.Name || item : item;
-                    if (currentItemId === itemId) {
-                      // 获取层数信息 - 从底层物品中获取
-                      if (typeof item === "object") {
-                        currentLayer =
-                          item.Level || item.level || item.floor || 1;
-                      }
-                      foundInSelect = true;
-                    }
-                  });
-                }
-              });
-
-              // 检查购买数据
-              ["Buy", "Bought", "Purchased"].forEach((buyType) => {
-                if (itemData[buyType] && Array.isArray(itemData[buyType])) {
-                  itemData[buyType].forEach((item) => {
-                    const currentItemId =
-                      typeof item === "object" ? item.Name || item : item;
-                    if (currentItemId === itemId) {
-                      // 获取层数信息 - 从底层物品中获取
-                      if (typeof item === "object") {
-                        currentLayer =
-                          item.Level || item.level || item.floor || 1;
-                      }
-                      foundInBuy = true;
-                    }
-                  });
-                }
-              });
-
-              // 如果是数组格式，检查是否包含目标物品
-              if (Array.isArray(itemData)) {
-                itemData.forEach((item) => {
-                  const currentItemId =
-                    typeof item === "object" ? item.Name || item : item;
-                  if (currentItemId === itemId) {
-                    // 获取层数信息 - 从底层物品中获取
-                    if (typeof item === "object") {
-                      currentLayer =
-                        item.Level || item.level || item.floor || 1;
-                    }
-                    foundInSelect = true;
-                  }
-                });
-              }
-            }
-          });
-
-          // 如果找到了目标物品，更新对应层数的统计
-          if (foundInShow || foundInSelect || foundInBuy) {
-            const normalizedLayer = Math.min(
-              Math.max(parseInt(currentLayer), 1),
-              30
-            );
-
-            if (foundInShow) {
-              layerData[normalizedLayer].show++;
-              totalShow++;
-            }
-            if (foundInSelect) {
-              layerData[normalizedLayer].select++;
-              totalSelect++;
-            }
-            if (foundInBuy) {
-              layerData[normalizedLayer].buy++;
-              totalBuy++;
-            }
-
-            layerData[normalizedLayer].total++;
-
-            // 更新首次和最后出现时间
-            const recordTime = new Date(
-              record.created_at || record.timestamp || Date.now()
-            );
-            if (!firstSeen || recordTime < firstSeen) {
-              firstSeen = recordTime;
-            }
-            if (!lastSeen || recordTime > lastSeen) {
-              lastSeen = recordTime;
-            }
-          }
-        }
-      } catch (e) {
-        console.warn(`记录 ${index} 处理失败:`, e);
-      }
-    });
+    const detail = await fetchDashboardItemDetail(itemId, null);
+    currentItemDetailData = {
+      itemId,
+      itemName,
+      layerData: detail.layerData,
+      totalShow: detail.totalShow,
+      totalSelect: detail.totalSelect,
+      totalBuy: detail.totalBuy,
+      firstSeen: detail.firstSeen ? new Date(detail.firstSeen) : null,
+      lastSeen: detail.lastSeen ? new Date(detail.lastSeen) : null,
+    };
+    currentItemDetailCursor = detail.pagination?.nextCursor || null;
+    currentItemDetailHasMore = !!detail.pagination?.hasMore;
 
     console.log(`物品 ${itemId} 分析完成:`, {
-      totalShow,
-      totalSelect,
-      totalBuy,
-      layerData: Object.keys(layerData).filter(
-        (layer) => layerData[layer].total > 0
+      totalShow: detail.totalShow,
+      totalSelect: detail.totalSelect,
+      totalBuy: detail.totalBuy,
+      layerData: Object.keys(detail.layerData || {}).filter(
+        (layer) => detail.layerData[layer].total > 0
       ),
     });
 
     // 显示详情内容
-    displayItemDetail({
-      itemId,
-      itemName,
-      layerData,
-      totalShow,
-      totalSelect,
-      totalBuy,
-      firstSeen,
-      lastSeen,
-    });
+    displayItemDetail(currentItemDetailData);
   } catch (error) {
     console.error("物品详情加载失败:", error);
     showItemDetailError(error.message);
+  }
+}
+
+async function loadMoreItemDetailData() {
+  if (
+    !currentItemDetailData ||
+    !currentItemDetailHasMore ||
+    currentItemDetailLoadingMore
+  ) {
+    return;
+  }
+
+  currentItemDetailLoadingMore = true;
+  const btn = document.getElementById("loadMoreItemDetailBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "加载中...";
+  }
+
+  try {
+    const detail = await fetchDashboardItemDetail(
+      currentItemDetailData.itemId,
+      currentItemDetailCursor
+    );
+    mergeItemDetailData(currentItemDetailData, detail);
+    currentItemDetailCursor = detail.pagination?.nextCursor || null;
+    currentItemDetailHasMore = !!detail.pagination?.hasMore;
+    displayItemDetail(currentItemDetailData);
+  } catch (error) {
+    console.error("继续加载物品详情失败:", error);
+    showMessage("继续加载详情失败: " + error.message, "error");
+  } finally {
+    currentItemDetailLoadingMore = false;
+  }
+}
+
+function mergeItemDetailData(target, page) {
+  target.totalShow += page.totalShow || 0;
+  target.totalSelect += page.totalSelect || 0;
+  target.totalBuy += page.totalBuy || 0;
+  if (page.firstSeen) {
+    const firstSeen = new Date(page.firstSeen);
+    if (!target.firstSeen || firstSeen < target.firstSeen) target.firstSeen = firstSeen;
+  }
+  if (page.lastSeen) {
+    const lastSeen = new Date(page.lastSeen);
+    if (!target.lastSeen || lastSeen > target.lastSeen) target.lastSeen = lastSeen;
+  }
+
+  for (let layer = 1; layer <= 30; layer++) {
+    target.layerData[layer] = target.layerData[layer] || {
+      show: 0,
+      select: 0,
+      buy: 0,
+      total: 0,
+    };
+    const source = page.layerData?.[layer] || {};
+    target.layerData[layer].show += source.show || 0;
+    target.layerData[layer].select += source.select || 0;
+    target.layerData[layer].buy += source.buy || 0;
+    target.layerData[layer].total += source.total || 0;
   }
 }
 
@@ -2711,6 +2471,19 @@ function displayItemDetail(data) {
           data.lastSeen ? data.lastSeen.toLocaleString() : "N/A"
         }</span>
       </div>
+      <div class="info-item">
+        <span class="info-label">详情范围:</span>
+        <span class="info-value">${
+          currentItemDetailHasMore ? "当前页，仍有更多数据" : "已加载到末页"
+        }</span>
+      </div>
+      <div class="info-item">
+        <button id="loadMoreItemDetailBtn" class="btn btn-primary" ${
+          !currentItemDetailHasMore || currentItemDetailLoadingMore ? "disabled" : ""
+        }>
+          ${currentItemDetailLoadingMore ? "加载中..." : "继续加载详情数据"}
+        </button>
+      </div>
     `;
   }
 
@@ -2726,6 +2499,11 @@ function displayItemDetail(data) {
       const analysisType = typeSelect.value;
       generateLayerChart(data.layerData, analysisType);
     });
+  }
+
+  const loadMoreDetailBtn = document.getElementById("loadMoreItemDetailBtn");
+  if (loadMoreDetailBtn) {
+    loadMoreDetailBtn.addEventListener("click", loadMoreItemDetailData);
   }
 
   // 填充详细统计
@@ -2979,6 +2757,10 @@ function showItemDetailError(message) {
 // 关闭物品详情
 function closeItemDetail() {
   try {
+    currentItemDetailData = null;
+    currentItemDetailCursor = null;
+    currentItemDetailHasMore = false;
+    currentItemDetailLoadingMore = false;
     const modal = document.querySelector(".item-detail-modal");
     if (modal) {
       modal.classList.remove("show");
@@ -3314,47 +3096,13 @@ function updateTimeAnalysis() {
     return;
   }
 
-  if (!allData || allData.length === 0) {
+  if (!dashboardData?.time) {
     timeContent.innerHTML = '<div class="no-data">暂无时间数据</div>';
     return;
   }
 
   try {
-    const hourlyStats = new Array(24).fill(0);
-    const dailyStats = {};
-    const weeklyStats = {
-      周日: 0,
-      周一: 0,
-      周二: 0,
-      周三: 0,
-      周四: 0,
-      周五: 0,
-      周六: 0,
-    };
-
-    // 统计时间数据
-    allData.forEach((record) => {
-      try {
-        const date = new Date(record.created_at);
-        const hour = date.getHours();
-        const dateStr = date.toLocaleDateString("zh-CN");
-        const weekday = [
-          "周日",
-          "周一",
-          "周二",
-          "周三",
-          "周四",
-          "周五",
-          "周六",
-        ][date.getDay()];
-
-        hourlyStats[hour]++;
-        dailyStats[dateStr] = (dailyStats[dateStr] || 0) + 1;
-        weeklyStats[weekday]++;
-      } catch (e) {
-        console.warn("时间数据解析失败:", e);
-      }
-    });
+    const { hourlyStats, weeklyStats, dailyStats } = dashboardData.time;
 
     // 生成HTML
     let html = '<div class="time-analysis-container">';
@@ -3407,13 +3155,9 @@ function updateTimeAnalysis() {
     html += "<h3>📊 每日活动统计</h3>";
     html += '<div class="daily-list">';
 
-    const sortedDays = Object.entries(dailyStats)
-      .sort((a, b) => new Date(b[0]) - new Date(a[0]))
-      .slice(0, 30); // 显示最近30天
+    const maxDaily = Math.max(...dailyStats.map((d) => d.count), 0);
 
-    const maxDaily = Math.max(...Object.values(dailyStats));
-
-    sortedDays.forEach(([date, count]) => {
+    dailyStats.forEach(({ date, count }) => {
       const width = maxDaily > 0 ? (count / maxDaily) * 100 : 0;
       const dateObj = new Date(date);
       const weekday = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][
@@ -3451,47 +3195,14 @@ function updatePingChart() {
   const pingContent = document.getElementById("ping-content");
   if (!pingContent) return;
 
-  if (!pingData || pingData.length === 0) {
+  const rows = dashboardData?.ping || [];
+  if (rows.length === 0) {
     pingContent.innerHTML =
       '<div class="no-data">暂无 Ping 数据，请确保 ping_selection 表有数据</div>';
     return;
   }
 
   try {
-    const byDay = {};
-    pingData.forEach((r) => {
-      const t = r.created_at;
-      if (!t) return;
-      const day = t.slice(0, 10);
-      const avgPing = Number(r.average_ping);
-      const maxPing = Number(r.max_ping);
-      if (!byDay[day]) {
-        byDay[day] = { sumAvg: 0, countAvg: 0, sumMax: 0, countMax: 0 };
-      }
-      if (!Number.isNaN(avgPing)) {
-        byDay[day].sumAvg += avgPing;
-        byDay[day].countAvg += 1;
-      }
-      if (!Number.isNaN(maxPing)) {
-        byDay[day].sumMax += maxPing;
-        byDay[day].countMax += 1;
-      }
-    });
-
-    const rows = Object.entries(byDay)
-      .map(([day, v]) => ({
-        day,
-        avg: v.countAvg > 0 ? Math.round(v.sumAvg / v.countAvg) : 0,
-        max: v.countMax > 0 ? Math.round(v.sumMax / v.countMax) : 0,
-      }))
-      .sort((a, b) => a.day.localeCompare(b.day));
-
-    if (rows.length === 0) {
-      pingContent.innerHTML =
-        '<div class="no-data">无法解析 Ping 数据（需含 average_ping / max_ping / created_at）</div>';
-      return;
-    }
-
     const maxVal = Math.max(...rows.map((r) => r.max), 1);
     let html = '<div class="ping-chart-container">';
     html += "<h3>📶 每日 Ping 统计（所有玩家）</h3>";
@@ -3572,12 +3283,7 @@ function showError(message = "数据加载失败，请检查配置并重试") {
   showLoading(false);
 }
 
-function csvCell(value) {
-  const text = value == null ? "" : String(value);
-  return `"${text.replace(/"/g, '""')}"`;
-}
-
-function exportErrorReport() {
+async function exportErrorReport() {
   if (!errorData || errorData.length === 0) {
     alert("没有报错报告可以导出");
     return;
@@ -3618,27 +3324,13 @@ function exportErrorReport() {
     });
 
     const csvContent = csvData
-      .map((row) => row.map((field) => csvCell(field)).join(","))
+      .map((row) => row.map((field) => `"${String(field ?? "").replace(/"/g, '""')}"`).join(","))
       .join("\n");
 
-    const blob = new Blob(["\ufeff" + csvContent], {
-      type: "text/csv;charset=utf-8;",
-    });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-
-    link.setAttribute("href", url);
-    link.setAttribute(
-      "download",
+    downloadCsvBlob(
+      csvContent,
       `报错报告_${new Date().toISOString().slice(0, 10)}.csv`
     );
-    link.style.visibility = "hidden";
-
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
     console.log("✅ 报错报告导出成功");
   } catch (error) {
     console.error("❌ 报错报告导出失败:", error);
@@ -3647,74 +3339,34 @@ function exportErrorReport() {
 }
 
 // 导出数据功能
-function exportData() {
-  if (!allData || allData.length === 0) {
-    const activeTab = document
-      .querySelector(".tab-btn.active")
-      ?.getAttribute("data-tab");
-    if (activeTab === "errors" && errorData && errorData.length > 0) {
-      exportErrorReport();
-      return;
-    }
+async function exportData() {
+  const activeTab = document
+    .querySelector(".tab-btn.active")
+    ?.getAttribute("data-tab");
 
-    alert("没有数据可以导出");
+  if (activeTab === "errors") {
+    await exportErrorReport();
     return;
   }
 
-  try {
-    // 准备CSV数据
-    const csvData = [];
-    csvData.push(["时间", "玩家ID", "数据类型", "详细信息"]);
+  alert("主数据已改为服务器端聚合，不再下载全量原始记录。请在物品分析页导出分析结果。");
+}
 
-    allData.forEach((record) => {
-      try {
-        let parsedData;
-        if (typeof record.data === "string") {
-          parsedData = JSON.parse(record.data);
-        } else {
-          parsedData = record.data;
-        }
+function downloadCsvBlob(csvContent, filename) {
+  const blob = new Blob(["\ufeff" + csvContent], {
+    type: "text/csv;charset=utf-8;",
+  });
+  const link = document.createElement("a");
+  const url = URL.createObjectURL(blob);
 
-        const time = new Date(record.created_at).toLocaleString("zh-CN");
-        const playerId = parsedData?.PlayerId || "未知";
-        const dataType = "游戏选择";
-        const details = JSON.stringify(parsedData);
+  link.setAttribute("href", url);
+  link.setAttribute("download", filename);
+  link.style.visibility = "hidden";
 
-        csvData.push([time, playerId, dataType, details]);
-      } catch (e) {
-        console.warn("导出数据解析失败:", e);
-      }
-    });
-
-    // 转换为CSV格式
-    const csvContent = csvData
-      .map((row) => row.map((field) => `"${field}"`).join(","))
-      .join("\n");
-
-    // 创建下载链接
-    const blob = new Blob(["\ufeff" + csvContent], {
-      type: "text/csv;charset=utf-8;",
-    });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-
-    link.setAttribute("href", url);
-    link.setAttribute(
-      "download",
-      `游戏数据_${new Date().toISOString().slice(0, 10)}.csv`
-    );
-    link.style.visibility = "hidden";
-
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    console.log("✅ 数据导出成功");
-  } catch (error) {
-    console.error("❌ 数据导出失败:", error);
-    alert("数据导出失败: " + error.message);
-  }
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 // 全局导出函数
