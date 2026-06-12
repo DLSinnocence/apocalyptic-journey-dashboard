@@ -102,11 +102,11 @@
     },
     "019ebc45-6480-7a42-a8e7-3e2e929401e8": {
       "ordinary_no_progress_guard": {
-        "fingerprint": "ordinary|已改成“只分页获取”。 现在行为是： - `dashboard-data` 每次只读一页，默认 `500` 条，最多 `1000` 条。 - edge function 返回当前页聚合结果 + `pagination.nextcursor` + `pagination.hasmore`。 - 前端首屏只加载第一页。 - 页面会显示“已汇总 x 条主数据，还有更多/已到末页”，并提供“加载更多数据”按钮。 - 点“加载更多数据”才请求下一页，并把新页的统计结果合并进当前仪表板。 - 物品详情也改成分页：先算第一页详情，弹窗内可继续加载详情数据。 - 部署用临时 pat 已删除。 - `dashboard-data` 分页版已重新部署。 验证： - `node --check js\\script.js` 通过。 - 冒烟请求 `dashboard-data` 带 `pagesize: 1` 返回 200，响应包含 `pagination.hasmore / nextcursor / pagesize` 结构。 - 没有 `export-csv` / pat 残留引用。",
-        "first_seen_at": "2026-06-12T17:01:30.022Z",
-        "last_seen_at": "2026-06-12T17:01:30.022Z",
+        "fingerprint": "ordinary|处理好了，这次按你的意思改对了： - 主仪表盘数据不再分页返回。`dashboard-data` 会在 edge function 内部按批次扫完近两个月 `save_selection` / `ping_selection`，服务端算好后一次返回完整聚合结果。 - 只有报错明细分页。首屏只返回一页报错记录，报错页里用“加载更多报错”继续取下一页。 - 报错统计现在显示“已加载 / 总数”，不会再把 `500` 这种分页大小误当成总记录数。 - 物品详情也撤掉了分页按钮，改回服务端完整计算后返回。 - 临时 supabase pat 已删除。 - `dashboard-data` 已重新部署成功。 验证： - `node --check js\\script.js` 通过。 - 搜过残留，`加载更多主数据 / 已汇总 / dashboardcursor / loadmoredashboard` 这些都没了。 - 未登录请求 edge function 返回缺少授权头，说明不会裸返回数据。",
+        "first_seen_at": "2026-06-12T17:38:14.463Z",
+        "last_seen_at": "2026-06-12T17:38:14.463Z",
         "repeat_count": 1,
-        "last_turn_id": "019ebcbe-7f7e-7f83-8d1d-2da314020253",
+        "last_turn_id": "019ebcde-0039-7af2-936c-85e9e3e1ecc0",
         "last_thread_id": null
       }
     }

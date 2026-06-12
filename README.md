@@ -50,13 +50,13 @@ const TABLE_NAME = "save_selection";
 
 4. 部署仪表板数据 Edge Function
 
-仪表板主数据计算已迁移到 Supabase Edge Function，并按游标分页获取，避免浏览器或函数一次性扫描完整大表。部署命令：
+仪表板主数据计算已迁移到 Supabase Edge Function。函数内部会按批次读取近两个月数据并完成聚合，前端只接收处理好的统计结果；报错明细列表单独按页加载。部署命令：
 
 ```bash
 supabase functions deploy dashboard-data --project-ref swtxytbwwwaacdvubkgy
 ```
 
-部署后，页面会调用 `dashboard-data` 获取当前页聚合结果；需要更大统计范围时可继续加载下一页。
+部署后，页面会调用 `dashboard-data` 获取完整仪表盘聚合结果，避免浏览器下载和计算原始大表。
 
 ## 🔒 安全提示
 所有敏感数据必须由 Supabase 端控制访问，建议启用 RLS（行级安全）；

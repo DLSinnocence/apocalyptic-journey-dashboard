@@ -3,8 +3,9 @@ import { createClient } from "@supabase/supabase-js";
 const TABLE_NAME = "save_selection";
 const TABLE_NAME_ERROR = "error_selection";
 const TABLE_NAME_PING = "ping_selection";
-const DEFAULT_PAGE_SIZE = 500;
-const MAX_PAGE_SIZE = 1000;
+const PAGE_SIZE = 1000;
+const DEFAULT_ERROR_PAGE_SIZE = 100;
+const MAX_ERROR_PAGE_SIZE = 500;
 const PLAYER_LIMIT = 100;
 const RECENT_ACTIVITY_LIMIT = 10;
 const DAILY_LIMIT = 30;
@@ -24,9 +25,10 @@ type PageResult = {
   rows: Record<string, unknown>[];
   nextCursor: Cursor | null;
   hasMore: boolean;
+  totalRows: number | null;
 };
 
-type DashboardMode = "summary" | "item-detail";
+type DashboardMode = "summary" | "item-detail" | "errors";
 
 type ItemStats = {
   show: Record<string, number>;
@@ -83,46 +85,40 @@ Deno.serve(async (req) => {
       const itemId = typeof body.itemId === "string" ? body.itemId : "";
       if (!itemId) return jsonError("Missing itemId", 400);
 
+      const rows = await fetchAllRows(supabase, TABLE_NAME);
+      return jsonResponse(buildItemDetail(rows, itemId));
+    }
+
+    if (mode === "errors") {
       const page = await fetchRowsPage(
         supabase,
-        TABLE_NAME,
+        TABLE_NAME_ERROR,
         parseCursor(body.cursor),
         parsePageSize(body.pageSize),
       );
       return jsonResponse({
-        ...buildItemDetail(page.rows, itemId),
+        rows: page.rows,
         pagination: {
           nextCursor: page.nextCursor,
           hasMore: page.hasMore,
           pageSize: page.rows.length,
+          totalRows: page.totalRows,
         },
       });
     }
 
-    const pageSize = parsePageSize(body.pageSize);
-    const cursor = isObjectRecord(body.cursor) ? body.cursor : {};
-    const [mainPage, errorPage, pingPage] = await Promise.all([
-      fetchRowsPage(supabase, TABLE_NAME, parseCursor(cursor.main), pageSize),
-      fetchRowsPage(supabase, TABLE_NAME_ERROR, parseCursor(cursor.errors), pageSize),
-      fetchRowsPage(supabase, TABLE_NAME_PING, parseCursor(cursor.ping), pageSize),
+    const [mainRows, errorPage, pingRows] = await Promise.all([
+      fetchAllRows(supabase, TABLE_NAME),
+      fetchRowsPage(
+        supabase,
+        TABLE_NAME_ERROR,
+        null,
+        parsePageSize(body.errorPageSize),
+      ),
+      fetchAllRows(supabase, TABLE_NAME_PING),
     ]);
 
-    return jsonResponse({
-      ...buildDashboardSummary(mainPage.rows, errorPage.rows, pingPage.rows),
-      pagination: {
-        nextCursor: {
-          main: mainPage.nextCursor,
-          errors: errorPage.nextCursor,
-          ping: pingPage.nextCursor,
-        },
-        hasMore: mainPage.hasMore || errorPage.hasMore || pingPage.hasMore,
-        pageSize: {
-          main: mainPage.rows.length,
-          errors: errorPage.rows.length,
-          ping: pingPage.rows.length,
-        },
-      },
-    });
+    return jsonResponse(buildDashboardSummary(mainRows, errorPage, pingRows));
   } catch (error) {
     console.error("Dashboard data failed:", error);
     return jsonError(
@@ -133,13 +129,14 @@ Deno.serve(async (req) => {
 });
 
 function normalizeMode(value: unknown): DashboardMode {
-  return value === "item-detail" ? "item-detail" : "summary";
+  if (value === "item-detail" || value === "errors") return value;
+  return "summary";
 }
 
 function parsePageSize(value: unknown) {
   const pageSize = Number(value);
-  if (!Number.isFinite(pageSize) || pageSize <= 0) return DEFAULT_PAGE_SIZE;
-  return Math.min(Math.max(Math.floor(pageSize), 1), MAX_PAGE_SIZE);
+  if (!Number.isFinite(pageSize) || pageSize <= 0) return DEFAULT_ERROR_PAGE_SIZE;
+  return Math.min(Math.max(Math.floor(pageSize), 1), MAX_ERROR_PAGE_SIZE);
 }
 
 function parseCursor(value: unknown): Cursor | null {
@@ -189,15 +186,58 @@ function jsonError(message: string, status: number) {
   );
 }
 
+async function fetchAllRows(
+  supabase: ReturnType<typeof createClient>,
+  tableName: string,
+) {
+  const allRows: Record<string, unknown>[] = [];
+
+  const twoMonthsAgoISO = getTwoMonthsAgoISO();
+  let cursor: Cursor | null = null;
+
+  while (true) {
+    let query = supabase
+      .from(tableName)
+      .select("*")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(PAGE_SIZE)
+      .gte("created_at", twoMonthsAgoISO);
+
+    if (cursor) {
+      query = query.or(
+        `created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`,
+      );
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw new Error(`${tableName}: ${error.message}`);
+    }
+
+    if (!data || data.length === 0) break;
+    allRows.push(...(data as Record<string, unknown>[]));
+
+    if (data.length < PAGE_SIZE) break;
+
+    const last = data[data.length - 1] as Record<string, unknown>;
+    cursor = {
+      created_at: String(last.created_at),
+      id: last.id as string | number,
+    };
+  }
+
+  return allRows;
+}
+
 async function fetchRowsPage(
   supabase: ReturnType<typeof createClient>,
   tableName: string,
   cursor: Cursor | null,
   pageSize: number,
 ): Promise<PageResult> {
-  const twoMonthsAgo = new Date();
-  twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
-  const twoMonthsAgoISO = twoMonthsAgo.toISOString();
+  const twoMonthsAgoISO = getTwoMonthsAgoISO();
 
   let query = supabase
     .from(tableName)
@@ -213,7 +253,10 @@ async function fetchRowsPage(
     );
   }
 
-  const { data, error } = await query;
+  const [{ data, error }, totalRows] = await Promise.all([
+    query,
+    fetchRecentRowCount(supabase, tableName, twoMonthsAgoISO),
+  ]);
 
   if (error) {
     throw new Error(`${tableName}: ${error.message}`);
@@ -227,6 +270,7 @@ async function fetchRowsPage(
   return {
     rows,
     hasMore,
+    totalRows,
     nextCursor:
       hasMore && last
         ? {
@@ -237,9 +281,32 @@ async function fetchRowsPage(
   };
 }
 
+async function fetchRecentRowCount(
+  supabase: ReturnType<typeof createClient>,
+  tableName: string,
+  twoMonthsAgoISO: string,
+) {
+  const { count, error } = await supabase
+    .from(tableName)
+    .select("id", { count: "exact", head: true })
+    .gte("created_at", twoMonthsAgoISO);
+
+  if (error) {
+    throw new Error(`${tableName} count: ${error.message}`);
+  }
+
+  return count ?? null;
+}
+
+function getTwoMonthsAgoISO() {
+  const twoMonthsAgo = new Date();
+  twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+  return twoMonthsAgo.toISOString();
+}
+
 function buildDashboardSummary(
   mainRows: Record<string, unknown>[],
-  errorRows: Record<string, unknown>[],
+  errorPage: PageResult,
   pingRows: Record<string, unknown>[],
 ) {
   const uniquePlayers = new Set<string>();
@@ -363,7 +430,13 @@ function buildDashboardSummary(
     },
     ping: buildPingSummary(pingRows),
     errors: {
-      rows: errorRows,
+      rows: errorPage.rows,
+      pagination: {
+        nextCursor: errorPage.nextCursor,
+        hasMore: errorPage.hasMore,
+        pageSize: errorPage.rows.length,
+        totalRows: errorPage.totalRows,
+      },
     },
   };
 }
