@@ -48,6 +48,16 @@ const TABLE_NAME = "save_selection";
 
 上传到静态托管平台（如 GitHub Pages、Netlify、Vercel）
 
+4. 部署仪表板数据 Edge Function
+
+仪表板主数据计算已迁移到 Supabase Edge Function，并按游标分页获取，避免浏览器或函数一次性扫描完整大表。部署命令：
+
+```bash
+supabase functions deploy dashboard-data --project-ref swtxytbwwwaacdvubkgy
+```
+
+部署后，页面会调用 `dashboard-data` 获取当前页聚合结果；需要更大统计范围时可继续加载下一页。
+
 ## 🔒 安全提示
 所有敏感数据必须由 Supabase 端控制访问，建议启用 RLS（行级安全）；
 
