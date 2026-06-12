@@ -10,13 +10,14 @@ import { initAuthStateListener, setupAuthForms } from "./auth.js";
 // 全局变量
 let errorData = [];
 let dashboardData = null;
-let dashboardCursor = null;
-let dashboardHasMore = false;
-let dashboardLoadingMore = false;
 let currentItemDetailData = null;
-let currentItemDetailCursor = null;
-let currentItemDetailHasMore = false;
-let currentItemDetailLoadingMore = false;
+let errorPagination = {
+  nextCursor: null,
+  hasMore: false,
+  pageSize: 0,
+  totalRows: null,
+};
+let errorLoadingMore = false;
 
 // DOM 元素
 let refreshBtn, loadingDiv, errorDiv;
@@ -26,7 +27,7 @@ let cacheEnabled = true;
 let cacheFailureCount = 0;
 const MAX_CACHE_FAILURES = 3;
 const DASHBOARD_CACHE_KEY = "dashboard_data_cache";
-const DASHBOARD_PAGE_SIZE = 500;
+const ERROR_PAGE_SIZE = 100;
 
 // 禁用缓存函数
 function disableCache() {
@@ -238,8 +239,6 @@ async function loadData(forceRefresh = false) {
         const cached = retrieveDataFromChunks(DASHBOARD_CACHE_KEY);
         if (cached && typeof cached === "object" && cached.dashboardData) {
           cachedDashboard = cached.dashboardData;
-          dashboardCursor = cached.dashboardCursor || null;
-          dashboardHasMore = !!cached.dashboardHasMore;
         }
       } catch (e) {
         console.warn("读取缓存失败:", e);
@@ -262,7 +261,7 @@ async function loadData(forceRefresh = false) {
       console.log("✅ 使用服务端聚合缓存优先渲染");
     }
 
-    const freshDashboard = await fetchDashboardSummary(null);
+    const freshDashboard = await fetchDashboardSummary();
     applyDashboardData(freshDashboard);
     saveDashboardCache();
     updateUI();
@@ -342,171 +341,74 @@ function mergeRowsById(newRows, baseRows) {
   return merged;
 }
 
-function applyDashboardData(data) {
-  dashboardData = data || null;
-  dashboardCursor = data?.pagination?.nextCursor || null;
-  dashboardHasMore = !!data?.pagination?.hasMore;
-  errorData = data?.errors?.rows || [];
-}
-
-function mergeDashboardPage(nextPage) {
-  if (!dashboardData) {
-    applyDashboardData(nextPage);
-    return;
+function appendErrorRows(rows) {
+  errorData = mergeRowsById(rows || [], errorData || []);
+  if (dashboardData) {
+    dashboardData.errors = dashboardData.errors || {};
+    dashboardData.errors.rows = errorData;
+    dashboardData.errors.pagination = errorPagination;
   }
-
-  dashboardData.generatedAt = nextPage.generatedAt || dashboardData.generatedAt;
-  dashboardData.stats.totalRecords =
-    (dashboardData.stats.totalRecords || 0) + (nextPage.stats?.totalRecords || 0);
-  dashboardData.stats.lastUpdate =
-    dashboardData.stats.lastUpdate || nextPage.stats?.lastUpdate || null;
-
-  const existingPlayerIds = new Set(
-    (dashboardData.players?.rows || []).map((row) => row.playerId)
-  );
-  const playerMap = new Map(
-    (dashboardData.players?.rows || []).map((row) => [row.playerId, { ...row }])
-  );
-  (nextPage.players?.rows || []).forEach((row) => {
-    const current = playerMap.get(row.playerId);
-    if (!current) {
-      playerMap.set(row.playerId, { ...row });
-    } else {
-      current.count += row.count || 0;
-      if (row.lastSeen && row.lastSeen > current.lastSeen) {
-        current.lastSeen = row.lastSeen;
-      }
-    }
-  });
-  dashboardData.players = {
-    totalPlayers: playerMap.size,
-    rows: Array.from(playerMap.values())
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 100),
-  };
-  dashboardData.stats.activePlayers = playerMap.size || existingPlayerIds.size;
-
-  dashboardData.overview.totalRecords =
-    (dashboardData.overview.totalRecords || 0) + (nextPage.overview?.totalRecords || 0);
-  dashboardData.overview.activePlayers = dashboardData.stats.activePlayers;
-  dashboardData.overview.totalSelections =
-    (dashboardData.overview.totalSelections || 0) + (nextPage.overview?.totalSelections || 0);
-  dashboardData.overview.recentActivity = [
-    ...(dashboardData.overview.recentActivity || []),
-    ...(nextPage.overview?.recentActivity || []),
-  ]
-    .sort((a, b) => String(b.time).localeCompare(String(a.time)))
-    .slice(0, 10);
-
-  mergeItemStats(dashboardData.itemStats, nextPage.itemStats);
-  const topItems = buildTopItemsFromItemStats(dashboardData.itemStats);
-  dashboardData.overview.topItems = topItems.slice(0, 10);
-  dashboardData.overview.uniqueItemCount = topItems.length;
-
-  mergeTimeStats(dashboardData.time, nextPage.time);
-  dashboardData.ping = mergePingRows(dashboardData.ping || [], nextPage.ping || []);
-  dashboardData.errors = dashboardData.errors || { rows: [] };
-  dashboardData.errors.rows = mergeRowsById(
-    nextPage.errors?.rows || [],
-    dashboardData.errors?.rows || []
-  );
-
-  dashboardCursor = nextPage.pagination?.nextCursor || null;
-  dashboardHasMore = !!nextPage.pagination?.hasMore;
 }
 
-function mergeItemStats(target, source) {
-  if (!source) return;
-  ["cards", "relics", "blessings", "hardTags"].forEach((type) => {
-    target[type] = target[type] || { show: {}, select: {}, buy: {} };
-    ["show", "select", "buy"].forEach((bucket) => {
-      target[type][bucket] = target[type][bucket] || {};
-      Object.entries(source[type]?.[bucket] || {}).forEach(([id, count]) => {
-        target[type][bucket][id] = (target[type][bucket][id] || 0) + count;
-      });
-    });
-  });
-}
+async function loadMoreErrors() {
+  if (!errorPagination.hasMore || errorLoadingMore) return;
 
-function buildTopItemsFromItemStats(itemStats) {
-  const counts = {};
-  Object.values(itemStats || {}).forEach((stats) => {
-    Object.entries(stats.select || {}).forEach(([id, count]) => {
-      counts[id] = (counts[id] || 0) + count;
-    });
-  });
-  return Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .map(([id, count]) => ({ id, count }));
-}
-
-function mergeTimeStats(target, source) {
-  if (!source) return;
-  target.hourlyStats = target.hourlyStats || new Array(24).fill(0);
-  (source.hourlyStats || []).forEach((count, index) => {
-    target.hourlyStats[index] = (target.hourlyStats[index] || 0) + count;
-  });
-  target.weeklyStats = target.weeklyStats || {};
-  Object.entries(source.weeklyStats || {}).forEach(([day, count]) => {
-    target.weeklyStats[day] = (target.weeklyStats[day] || 0) + count;
-  });
-  const dailyMap = new Map((target.dailyStats || []).map((d) => [d.date, d.count]));
-  (source.dailyStats || []).forEach(({ date, count }) => {
-    dailyMap.set(date, (dailyMap.get(date) || 0) + count);
-  });
-  target.dailyStats = Array.from(dailyMap.entries())
-    .map(([date, count]) => ({ date, count }))
-    .sort((a, b) => new Date(b.date) - new Date(a.date))
-    .slice(0, 30);
-}
-
-function mergePingRows(targetRows, sourceRows) {
-  const map = new Map((targetRows || []).map((row) => [row.day, { ...row }]));
-  (sourceRows || []).forEach((row) => {
-    const current = map.get(row.day);
-    if (!current) {
-      map.set(row.day, { ...row });
-    } else {
-      current.avg = Math.round(((current.avg || 0) + (row.avg || 0)) / 2);
-      current.max = Math.max(current.max || 0, row.max || 0);
-    }
-  });
-  return Array.from(map.values()).sort((a, b) => a.day.localeCompare(b.day));
-}
-
-async function loadMoreDashboardData() {
-  if (!dashboardHasMore || dashboardLoadingMore) return;
-  dashboardLoadingMore = true;
-  showMessage("正在加载下一页数据...", "info");
+  errorLoadingMore = true;
+  const btn = document.getElementById("loadMoreErrorsBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "加载中...";
+  }
 
   try {
-    const nextPage = await fetchDashboardSummary(dashboardCursor);
-    mergeDashboardPage(nextPage);
+    const page = await fetchErrorPage(errorPagination.nextCursor);
+    errorPagination = page?.pagination || {
+      nextCursor: null,
+      hasMore: false,
+      pageSize: 0,
+      totalRows: null,
+    };
+    appendErrorRows(page?.rows || []);
     saveDashboardCache();
-    updateUI();
-    showMessage(dashboardHasMore ? "已加载下一页数据" : "全部分页数据已加载", "success");
+    updateErrorReport();
   } catch (error) {
-    console.error("加载下一页数据失败:", error);
-    showMessage("加载下一页失败: " + error.message, "error");
+    console.error("加载更多报错失败:", error);
+    showMessage("加载更多报错失败: " + error.message, "error");
   } finally {
-    dashboardLoadingMore = false;
+    errorLoadingMore = false;
   }
 }
 
-async function fetchDashboardSummary(cursor = null) {
+function applyDashboardData(data) {
+  dashboardData = data || null;
+  errorData = data?.errors?.rows || [];
+  errorPagination = data?.errors?.pagination || {
+    nextCursor: null,
+    hasMore: false,
+    pageSize: errorData.length,
+    totalRows: null,
+  };
+}
+
+async function fetchDashboardSummary() {
   return callDashboardDataFunction({
     mode: "summary",
-    cursor,
-    pageSize: DASHBOARD_PAGE_SIZE,
+    errorPageSize: ERROR_PAGE_SIZE,
   });
 }
 
-async function fetchDashboardItemDetail(itemId, cursor = null) {
+async function fetchDashboardItemDetail(itemId) {
   return callDashboardDataFunction({
     mode: "item-detail",
     itemId,
+  });
+}
+
+async function fetchErrorPage(cursor = null) {
+  return callDashboardDataFunction({
+    mode: "errors",
     cursor,
-    pageSize: DASHBOARD_PAGE_SIZE,
+    pageSize: ERROR_PAGE_SIZE,
   });
 }
 
@@ -558,8 +460,6 @@ function saveDashboardCache(data = dashboardData) {
   const cacheData = {
     timestamp: Date.now(),
     dashboardData: data || null,
-    dashboardCursor,
-    dashboardHasMore,
   };
   const result = storeDataInChunks(cacheData, DASHBOARD_CACHE_KEY);
   if (result.success) {
@@ -827,46 +727,9 @@ function updateUI() {
       updateOverview();
     }
 
-    updatePaginationControls();
     console.log("✅ UI更新完成");
   } catch (error) {
     console.error("❌ UI更新失败:", error);
-  }
-}
-
-function updatePaginationControls() {
-  const mainContent = document.querySelector(".main-content");
-  if (!mainContent) return;
-
-  let controls = document.getElementById("dashboardPaginationControls");
-  if (!dashboardData) {
-    if (controls) controls.remove();
-    return;
-  }
-
-  if (!controls) {
-    controls = document.createElement("div");
-    controls.id = "dashboardPaginationControls";
-    controls.style.cssText =
-      "display:flex;gap:12px;align-items:center;justify-content:flex-end;margin:12px 0;";
-    mainContent.prepend(controls);
-  }
-
-  const loadedCount = dashboardData?.stats?.totalRecords || 0;
-  controls.innerHTML = `
-    <span class="pagination-status">已汇总 ${loadedCount.toLocaleString()} 条主数据${
-    dashboardHasMore ? "，还有更多" : "，已到末页"
-  }</span>
-    <button id="loadMoreDashboardBtn" class="btn btn-primary" ${
-      !dashboardHasMore || dashboardLoadingMore ? "disabled" : ""
-    }>
-      ${dashboardLoadingMore ? "加载中..." : "加载更多数据"}
-    </button>
-  `;
-
-  const btn = document.getElementById("loadMoreDashboardBtn");
-  if (btn) {
-    btn.addEventListener("click", loadMoreDashboardData);
   }
 }
 
@@ -920,7 +783,11 @@ function updateErrorReport() {
     const groupedErrors = groupErrorsByMessage(errorData);
 
     // 简单的统计信息
-    const totalErrors = errorData.length;
+    const loadedErrors = errorData.length;
+    const totalErrors =
+      typeof errorPagination.totalRows === "number"
+        ? errorPagination.totalRows
+        : loadedErrors;
     const uniqueErrors = Object.keys(groupedErrors).length;
     const solvedErrors = errorData.filter((error) => {
       try {
@@ -942,8 +809,8 @@ function updateErrorReport() {
       </div>
       <div class="error-stats">
         <h3>📊 报错统计</h3>
-        <p>总数: ${totalErrors} | 独特错误: ${uniqueErrors} | 已解决: ${solvedErrors} | 未解决: ${
-      totalErrors - solvedErrors
+        <p>已加载: ${loadedErrors}/${totalErrors} | 当前错误类型: ${uniqueErrors} | 已解决: ${solvedErrors} | 当前未解决: ${
+      loadedErrors - solvedErrors
     }</p>
       </div>
     `;
@@ -1021,7 +888,7 @@ function updateErrorReport() {
             <div class="error-group-message">
               <strong>错误信息:</strong> ${escapeHtml(message)}
             </div>
-            <button type="button" class="btn btn-sm btn-danger delete-group-btn" data-group-indices="${groupIndices}" title="删除该类型全部报错">🗑️ 删除全部</button>
+            <button type="button" class="btn btn-sm btn-danger delete-group-btn" data-group-indices="${groupIndices}" title="删除当前已加载的同类型报错">🗑️ 删除已加载</button>
           </div>
           
           <div class="error-group-details" style="display: ${
@@ -1112,6 +979,21 @@ function updateErrorReport() {
     });
 
     html += "</div>"; // 结束 error-items-container
+    html += `
+      <div class="error-pagination-actions" style="display:flex;justify-content:center;margin-top:16px;">
+        <button id="loadMoreErrorsBtn" class="btn btn-primary" ${
+          !errorPagination.hasMore || errorLoadingMore ? "disabled" : ""
+        }>
+          ${
+            errorLoadingMore
+              ? "加载中..."
+              : errorPagination.hasMore
+                ? "加载更多报错"
+                : "报错已加载完"
+          }
+        </button>
+      </div>
+    `;
     html += "</div>"; // 结束 error-list
     html += "</div>"; // 结束 error-report-container
 
@@ -1234,7 +1116,7 @@ function bindGroupEvents() {
   }
 }
 
-// 删除该类型全部报错（indices 为 data-group-indices 逗号分隔的字符串，或兼容旧版传 message）
+// 删除当前已加载的同类型报错（indices 为 data-group-indices 逗号分隔的字符串，或兼容旧版传 message）
 async function deleteAllErrorsInGroup(indicesOrMessage) {
   let items = []; // { index, id }
   if (typeof indicesOrMessage === "string" && /^\d+(,\d+)*$/.test(indicesOrMessage.trim())) {
@@ -1399,13 +1281,15 @@ function bindErrorEvents() {
   }
 
   const newHandler = function (e) {
-    const btn = e.target.closest(".toggle-status-btn, .add-note-btn, .delete-error-btn, .delete-group-btn, .export-errors-btn");
+    const btn = e.target.closest(".toggle-status-btn, .add-note-btn, .delete-error-btn, .delete-group-btn, .export-errors-btn, #loadMoreErrorsBtn");
     if (!btn) return;
 
     e.preventDefault();
     e.stopPropagation();
 
-    if (btn.classList.contains("export-errors-btn")) {
+    if (btn.id === "loadMoreErrorsBtn") {
+      loadMoreErrors();
+    } else if (btn.classList.contains("export-errors-btn")) {
       exportErrorReport();
     } else if (btn.classList.contains("toggle-status-btn")) {
       const index = parseInt(btn.getAttribute("data-index"));
@@ -2315,7 +2199,7 @@ function createItemDetailModal(itemId, itemName) {
 async function loadItemDetailData(itemId, itemName) {
   try {
     console.log(`开始分析物品: ${itemId}`);
-    const detail = await fetchDashboardItemDetail(itemId, null);
+    const detail = await fetchDashboardItemDetail(itemId);
     currentItemDetailData = {
       itemId,
       itemName,
@@ -2326,8 +2210,6 @@ async function loadItemDetailData(itemId, itemName) {
       firstSeen: detail.firstSeen ? new Date(detail.firstSeen) : null,
       lastSeen: detail.lastSeen ? new Date(detail.lastSeen) : null,
     };
-    currentItemDetailCursor = detail.pagination?.nextCursor || null;
-    currentItemDetailHasMore = !!detail.pagination?.hasMore;
 
     console.log(`物品 ${itemId} 分析完成:`, {
       totalShow: detail.totalShow,
@@ -2343,67 +2225,6 @@ async function loadItemDetailData(itemId, itemName) {
   } catch (error) {
     console.error("物品详情加载失败:", error);
     showItemDetailError(error.message);
-  }
-}
-
-async function loadMoreItemDetailData() {
-  if (
-    !currentItemDetailData ||
-    !currentItemDetailHasMore ||
-    currentItemDetailLoadingMore
-  ) {
-    return;
-  }
-
-  currentItemDetailLoadingMore = true;
-  const btn = document.getElementById("loadMoreItemDetailBtn");
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = "加载中...";
-  }
-
-  try {
-    const detail = await fetchDashboardItemDetail(
-      currentItemDetailData.itemId,
-      currentItemDetailCursor
-    );
-    mergeItemDetailData(currentItemDetailData, detail);
-    currentItemDetailCursor = detail.pagination?.nextCursor || null;
-    currentItemDetailHasMore = !!detail.pagination?.hasMore;
-    displayItemDetail(currentItemDetailData);
-  } catch (error) {
-    console.error("继续加载物品详情失败:", error);
-    showMessage("继续加载详情失败: " + error.message, "error");
-  } finally {
-    currentItemDetailLoadingMore = false;
-  }
-}
-
-function mergeItemDetailData(target, page) {
-  target.totalShow += page.totalShow || 0;
-  target.totalSelect += page.totalSelect || 0;
-  target.totalBuy += page.totalBuy || 0;
-  if (page.firstSeen) {
-    const firstSeen = new Date(page.firstSeen);
-    if (!target.firstSeen || firstSeen < target.firstSeen) target.firstSeen = firstSeen;
-  }
-  if (page.lastSeen) {
-    const lastSeen = new Date(page.lastSeen);
-    if (!target.lastSeen || lastSeen > target.lastSeen) target.lastSeen = lastSeen;
-  }
-
-  for (let layer = 1; layer <= 30; layer++) {
-    target.layerData[layer] = target.layerData[layer] || {
-      show: 0,
-      select: 0,
-      buy: 0,
-      total: 0,
-    };
-    const source = page.layerData?.[layer] || {};
-    target.layerData[layer].show += source.show || 0;
-    target.layerData[layer].select += source.select || 0;
-    target.layerData[layer].buy += source.buy || 0;
-    target.layerData[layer].total += source.total || 0;
   }
 }
 
@@ -2471,19 +2292,6 @@ function displayItemDetail(data) {
           data.lastSeen ? data.lastSeen.toLocaleString() : "N/A"
         }</span>
       </div>
-      <div class="info-item">
-        <span class="info-label">详情范围:</span>
-        <span class="info-value">${
-          currentItemDetailHasMore ? "当前页，仍有更多数据" : "已加载到末页"
-        }</span>
-      </div>
-      <div class="info-item">
-        <button id="loadMoreItemDetailBtn" class="btn btn-primary" ${
-          !currentItemDetailHasMore || currentItemDetailLoadingMore ? "disabled" : ""
-        }>
-          ${currentItemDetailLoadingMore ? "加载中..." : "继续加载详情数据"}
-        </button>
-      </div>
     `;
   }
 
@@ -2499,11 +2307,6 @@ function displayItemDetail(data) {
       const analysisType = typeSelect.value;
       generateLayerChart(data.layerData, analysisType);
     });
-  }
-
-  const loadMoreDetailBtn = document.getElementById("loadMoreItemDetailBtn");
-  if (loadMoreDetailBtn) {
-    loadMoreDetailBtn.addEventListener("click", loadMoreItemDetailData);
   }
 
   // 填充详细统计
@@ -2758,9 +2561,6 @@ function showItemDetailError(message) {
 function closeItemDetail() {
   try {
     currentItemDetailData = null;
-    currentItemDetailCursor = null;
-    currentItemDetailHasMore = false;
-    currentItemDetailLoadingMore = false;
     const modal = document.querySelector(".item-detail-modal");
     if (modal) {
       modal.classList.remove("show");
