@@ -26,7 +26,7 @@ let refreshBtn, loadingDiv, errorDiv;
 let cacheEnabled = true;
 let cacheFailureCount = 0;
 const MAX_CACHE_FAILURES = 3;
-const DASHBOARD_CACHE_KEY = "dashboard_data_cache";
+const DASHBOARD_CACHE_KEY = "dashboard_data_cache_v2";
 const ERROR_PAGE_SIZE = 100;
 
 // 禁用缓存函数
