@@ -102,11 +102,11 @@
     },
     "019ebc45-6480-7a42-a8e7-3e2e929401e8": {
       "ordinary_no_progress_guard": {
-        "fingerprint": "ordinary|抓到原因了：supabase 那边单次 `.limit(1000)` 实际只回了 `500`，之前代码看到 `500 < 1000` 就误判“已经最后一页”，所以主统计总记录数还是 500。 我已经修了并重新部署： - edge function 内部批次大小改成 `500`。 - `fetchallrows()` 不再用 `data.length < page_size` 判断结束，而是一直按 cursor 翻页，直到返回 `0` 条才停止。 - 前端缓存 key 改成 `dashboard_data_cache_v2`，不会再读旧的 `500` 聚合缓存。 - 临时 supabase token 已删除。 - `dashboard-data` 已重新部署成功。 - `node --check js\\script.js` 通过。 你现在刷新页面应该就不是 500 了。若浏览器还显示旧值，点一下页面上的“清除缓存”或强刷即可，不过我已经换了缓存 key，正常刷新就会走新结果。",
-        "first_seen_at": "2026-06-12T19:41:07.544Z",
-        "last_seen_at": "2026-06-12T19:41:07.544Z",
+        "fingerprint": "ordinary|修了，刚才这个 500 大概率是 edge function 里的 cursor 查询条件炸了：我用过 `id.lt`，如果 `id` 是 uuid/非数字类型，supabase/postgrest 会直接报服务端错误。 现在已经改掉并重新部署： - `fetchallrows()` 改成 `.range(offset, offset + 499)` 分批扫，不再用 `id.lt` cursor。 - 报错分页也改成 `{ offset }` cursor，避免同样的问题。 - 前端错误处理增强了：如果 edge function 还报错，控制台会打印 `edge function 调用失败`，里面有 `status/body`，不再只显示泛化的“服务端数据计算失败”。 - `dashboard-data` 已重新部署成功。 - 临时 supabase token 已删除。 - `node --check js\\script.js` 通过。 你现在刷新再试一下。若还失败，把新的 `edge function 调用失败` 那段 body 发我，我就能直接按真实错误继续修。",
+        "first_seen_at": "2026-06-12T20:27:21.160Z",
+        "last_seen_at": "2026-06-12T20:27:21.160Z",
         "repeat_count": 1,
-        "last_turn_id": "019ebd56-9d08-7451-9d82-16359c596847",
+        "last_turn_id": "019ebd80-3991-79f3-97fc-7c7f2f008416",
         "last_thread_id": null
       }
     }

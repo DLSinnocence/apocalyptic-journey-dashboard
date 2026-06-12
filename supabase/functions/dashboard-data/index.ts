@@ -17,8 +17,7 @@ const corsHeaders = {
 };
 
 type Cursor = {
-  created_at: string;
-  id: string | number;
+  offset: number;
 };
 
 type PageResult = {
@@ -141,11 +140,9 @@ function parsePageSize(value: unknown) {
 
 function parseCursor(value: unknown): Cursor | null {
   if (!isObjectRecord(value)) return null;
-  if (!value.created_at || value.id == null) return null;
-  return {
-    created_at: String(value.created_at),
-    id: value.id as string | number,
-  };
+  const offset = Number(value.offset);
+  if (!Number.isFinite(offset) || offset < 0) return null;
+  return { offset: Math.floor(offset) };
 }
 
 function getSupabaseClientKey(req: Request) {
@@ -193,24 +190,16 @@ async function fetchAllRows(
   const allRows: Record<string, unknown>[] = [];
 
   const twoMonthsAgoISO = getTwoMonthsAgoISO();
-  let cursor: Cursor | null = null;
+  let offset = 0;
 
   while (true) {
-    let query = supabase
+    const { data, error } = await supabase
       .from(tableName)
       .select("*")
       .order("created_at", { ascending: false })
       .order("id", { ascending: false })
-      .limit(PAGE_SIZE)
-      .gte("created_at", twoMonthsAgoISO);
-
-    if (cursor) {
-      query = query.or(
-        `created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`,
-      );
-    }
-
-    const { data, error } = await query;
+      .gte("created_at", twoMonthsAgoISO)
+      .range(offset, offset + PAGE_SIZE - 1);
 
     if (error) {
       throw new Error(`${tableName}: ${error.message}`);
@@ -218,12 +207,7 @@ async function fetchAllRows(
 
     if (!data || data.length === 0) break;
     allRows.push(...(data as Record<string, unknown>[]));
-
-    const last = data[data.length - 1] as Record<string, unknown>;
-    cursor = {
-      created_at: String(last.created_at),
-      id: last.id as string | number,
-    };
+    offset += data.length;
   }
 
   return allRows;
@@ -237,24 +221,16 @@ async function fetchRowsPage(
 ): Promise<PageResult> {
   const twoMonthsAgoISO = getTwoMonthsAgoISO();
 
-  let query = supabase
+  const offset = cursor?.offset || 0;
+  const { data, error } = await supabase
     .from(tableName)
     .select("*")
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
-    .limit(pageSize + 1)
-    .gte("created_at", twoMonthsAgoISO);
+    .gte("created_at", twoMonthsAgoISO)
+    .range(offset, offset + pageSize);
 
-  if (cursor) {
-    query = query.or(
-      `created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`,
-    );
-  }
-
-  const [{ data, error }, totalRows] = await Promise.all([
-    query,
-    fetchRecentRowCount(supabase, tableName, twoMonthsAgoISO),
-  ]);
+  const totalRows = await fetchRecentRowCount(supabase, tableName, twoMonthsAgoISO);
 
   if (error) {
     throw new Error(`${tableName}: ${error.message}`);
@@ -269,13 +245,7 @@ async function fetchRowsPage(
     rows,
     hasMore,
     totalRows,
-    nextCursor:
-      hasMore && last
-        ? {
-            created_at: String(last.created_at),
-            id: last.id as string | number,
-          }
-        : null,
+    nextCursor: hasMore ? { offset: offset + rows.length } : null,
   };
 }
 
