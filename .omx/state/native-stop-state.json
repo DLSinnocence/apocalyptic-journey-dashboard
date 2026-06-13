@@ -102,11 +102,11 @@
     },
     "019ebc45-6480-7a42-a8e7-3e2e929401e8": {
       "ordinary_no_progress_guard": {
-        "fingerprint": "ordinary|这次的错误是 edge function 算力不够，原因是它还在把近两个月主表和 ping 表的原始 rows 全部拉进数组再统一计算。 我已改成流式累计并重新部署： - `dashboard-data` 不再保存完整 `mainrows` / `pingrows`。 - 每次只取 500 条，马上累加到统计对象里，然后丢掉这一页原始数据。 - 主表只取 `id,created_at,data`，ping 表只取 `id,created_at,average_ping,max_ping`，减少传输和解析压力。 - 物品详情也改成同样的批量累计，不再全量数组堆内存。 - 临时 supabase token 已删除。 - `dashboard-data` 已部署成功。 - `node --check js\\script.js` 通过。 现在再刷新试一下。若还报 `not enough compute resources`，那就说明实时扫近两个月数据本身已经超出 edge function 限制，下一步需要做数据库侧预聚合/物化表，而不是继续让 edge function 现场扫全量。",
-        "first_seen_at": "2026-06-13T16:45:29.682Z",
-        "last_seen_at": "2026-06-13T16:45:29.682Z",
+        "fingerprint": "ordinary|这次按真实错误处理了：`worker_resource_limit` 不是前端问题，是 edge function 仍然现场扫太多数据导致算力被限。 我已经重新改并部署了 `dashboard-data`： - 不再把主表 / ping 表全量 rows 存成数组。 - 改成每 500 条读取后立刻累计统计，然后丢弃原始页数据。 - 主表只取 `id,created_at,data`，ping 表只取 `id,created_at,average_ping,max_ping`。 - 物品详情也改成同样的批量累计。 - 临时 supabase token 已删除。 - 部署成功，`node --check js\\script.js` 通过。 现在再刷新试一下。 如果仍然报 `worker_resource_limit`，就说明“实时扫近两个月数据”本身已经超出 edge function 能力，下一步必须做数据库侧预聚合/物化表，edge function 只读聚合结果。",
+        "first_seen_at": "2026-06-13T16:50:30.327Z",
+        "last_seen_at": "2026-06-13T16:50:30.327Z",
         "repeat_count": 1,
-        "last_turn_id": "019ec1d9-38d9-7272-b360-4b17459460da",
+        "last_turn_id": "019ec1e3-9fd4-7e52-a81e-1a1e9d12272e",
         "last_thread_id": null
       }
     },
