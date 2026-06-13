@@ -102,11 +102,11 @@
     },
     "019ebc45-6480-7a42-a8e7-3e2e929401e8": {
       "ordinary_no_progress_guard": {
-        "fingerprint": "ordinary|这次已经换成数据库侧 rpc 了，不再让 edge function 扫全表，所以不会再触发 `worker_resource_limit` 那条路径。 我做了这些： - 新增并在 supabase sql editor 执行了 `dashboard_data_summary(error_page_size)` 和 `dashboard_item_detail(item_id)`。 - edge function `dashboard-data` 现在只做鉴权 + 调 rpc + 返回 json。 - 报错明细分页仍然走 edge function 的轻量分页。 - 重新部署了 `dashboard-data`。 - 临时 supabase token 已删除。 - `node --check js\\script.js` 通过。 现在刷新试一下。若还有报错，应该会是 sql/rpc 的具体错误，不会再是 edge worker compute limit。",
-        "first_seen_at": "2026-06-13T17:02:10.675Z",
-        "last_seen_at": "2026-06-13T17:02:10.675Z",
+        "fingerprint": "ordinary|测完并修好了。 我按你说的先跑测试再应用： - 网页实测旧版本：登录后约 9 秒失败，报 `dashboard_data_summary: canceling statement due to statement timeout` - 先在 sql editor 用 `begin ... rollback` 测了最小 sql，通过后才应用 - 应用后第一次网页测试：不再 timeout，但暴露出 sql 错误 `function jsonb_object_length(jsonb) does not exist` - 又做了最小 sql 修复，仍然先 `begin ... rollback` 测通过，再应用 - 最终网页实测通过：仪表盘返回并渲染 `345,173` 条记录，控制台无新 error - 快速刷新也正常，直接显示缓存数据，无报错 改动很小： - 只改了 [supabase/migrations/20260614005349_dashboard_rpc.sql](d:/workspace/web/game-analytics/supabase/migrations/20260614005349_dashboard_rpc.sql:38) - 没有改原表 - 没有建索引 - 没有推送未测试 sql - `.omx/state/native-stop-state.json` 是运行状态文件变动，我没把它当业务改动 验证： - `node --check js\\script.js` 通过 - sql editor 回滚测试通过 - 真实网页加载通过，不再 500 / timeout",
+        "first_seen_at": "2026-06-13T17:45:55.756Z",
+        "last_seen_at": "2026-06-13T17:45:55.756Z",
         "repeat_count": 1,
-        "last_turn_id": "019ec1e6-bfc1-7353-8f76-b580d44f0af7",
+        "last_turn_id": "019ec20a-abf7-7c30-ace5-006f98557777",
         "last_thread_id": null
       }
     },
