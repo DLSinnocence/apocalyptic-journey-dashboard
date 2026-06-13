@@ -35,6 +35,15 @@ exception when others then
 end;
 $$;
 
+create or replace function public.dashboard_jsonb_object_length_safe(value jsonb)
+returns integer
+language sql
+immutable
+as $$
+  select count(*)::integer
+  from jsonb_object_keys(coalesce(value, '{}'::jsonb));
+$$;
+
 create or replace function public.dashboard_record_items(payload jsonb)
 returns table(kind text, bucket text, item_id text)
 language plpgsql
@@ -138,6 +147,7 @@ declare
   error_rows jsonb;
   error_total integer;
 begin
+  perform set_config('statement_timeout', '120000', true);
   error_page_size := least(greatest(coalesce(error_page_size, 100), 1), 500);
 
   for rec in
@@ -250,19 +260,19 @@ begin
     'generatedAt', now(),
     'stats', jsonb_build_object(
       'totalRecords', total_records,
-      'activePlayers', jsonb_object_length(unique_players),
+      'activePlayers', public.dashboard_jsonb_object_length_safe(unique_players),
       'lastUpdate', last_update
     ),
     'overview', jsonb_build_object(
       'totalRecords', total_records,
-      'activePlayers', jsonb_object_length(unique_players),
+      'activePlayers', public.dashboard_jsonb_object_length_safe(unique_players),
       'totalSelections', total_selections,
-      'uniqueItemCount', jsonb_object_length(item_counts),
+      'uniqueItemCount', public.dashboard_jsonb_object_length_safe(item_counts),
       'topItems', top_items,
       'recentActivity', recent_activity
     ),
     'players', jsonb_build_object(
-      'totalPlayers', jsonb_object_length(player_stats),
+      'totalPlayers', public.dashboard_jsonb_object_length_safe(player_stats),
       'rows', players
     ),
     'itemStats', item_stats,
@@ -312,6 +322,7 @@ declare
   last_seen timestamptz := null;
   candidate_id text;
 begin
+  perform set_config('statement_timeout', '120000', true);
   for i in 1..30 loop
     layer_data := jsonb_set(layer_data, array[i::text], '{"show":0,"select":0,"buy":0,"total":0}'::jsonb, true);
   end loop;
@@ -439,6 +450,7 @@ $$;
 grant execute on function public.dashboard_jsonb_safe(text) to authenticated;
 grant execute on function public.dashboard_jsonb_increment(jsonb, text[], integer) to authenticated;
 grant execute on function public.dashboard_int_safe(text, integer) to authenticated;
+grant execute on function public.dashboard_jsonb_object_length_safe(jsonb) to authenticated;
 grant execute on function public.dashboard_record_items(jsonb) to authenticated;
 grant execute on function public.dashboard_data_summary(integer) to authenticated;
 grant execute on function public.dashboard_item_detail(text) to authenticated;
