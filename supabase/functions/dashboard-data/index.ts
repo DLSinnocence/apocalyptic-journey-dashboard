@@ -49,6 +49,38 @@ type LayerStats = {
   total: number;
 };
 
+type PingDayStats = {
+  sumAvg: number;
+  countAvg: number;
+  sumMax: number;
+  countMax: number;
+};
+
+type DashboardAccumulator = {
+  uniquePlayers: Set<string>;
+  itemCounts: Record<string, number>;
+  playerStats: Record<string, { count: number; lastSeen: string }>;
+  itemStats: ItemStatsByType;
+  hourlyStats: number[];
+  dailyStats: Record<string, number>;
+  weeklyStats: Record<string, number>;
+  recentActivity: Array<{ time: string; playerId: string }>;
+  pingByDay: Record<string, PingDayStats>;
+  totalSelections: number;
+  totalRecords: number;
+  lastUpdate: string | null;
+};
+
+type ItemDetailAccumulator = {
+  itemId: string;
+  layerData: Record<number, LayerStats>;
+  totalShow: number;
+  totalSelect: number;
+  totalBuy: number;
+  firstSeen: string | null;
+  lastSeen: string | null;
+};
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -84,8 +116,7 @@ Deno.serve(async (req) => {
       const itemId = typeof body.itemId === "string" ? body.itemId : "";
       if (!itemId) return jsonError("Missing itemId", 400);
 
-      const rows = await fetchAllRows(supabase, TABLE_NAME);
-      return jsonResponse(buildItemDetail(rows, itemId));
+      return jsonResponse(await buildItemDetailFromDatabase(supabase, itemId));
     }
 
     if (mode === "errors") {
@@ -106,18 +137,28 @@ Deno.serve(async (req) => {
       });
     }
 
-    const [mainRows, errorPage, pingRows] = await Promise.all([
-      fetchAllRows(supabase, TABLE_NAME),
+    const [summary, errorPage] = await Promise.all([
+      buildDashboardSummaryFromDatabase(supabase),
       fetchRowsPage(
         supabase,
         TABLE_NAME_ERROR,
         null,
         parsePageSize(body.errorPageSize),
       ),
-      fetchAllRows(supabase, TABLE_NAME_PING),
     ]);
 
-    return jsonResponse(buildDashboardSummary(mainRows, errorPage, pingRows));
+    return jsonResponse({
+      ...summary,
+      errors: {
+        rows: errorPage.rows,
+        pagination: {
+          nextCursor: errorPage.nextCursor,
+          hasMore: errorPage.hasMore,
+          pageSize: errorPage.rows.length,
+          totalRows: errorPage.totalRows,
+        },
+      },
+    });
   } catch (error) {
     console.error("Dashboard data failed:", error);
     return jsonError(
@@ -183,19 +224,19 @@ function jsonError(message: string, status: number) {
   );
 }
 
-async function fetchAllRows(
+async function fetchRowsInBatches(
   supabase: ReturnType<typeof createClient>,
   tableName: string,
+  columns: string,
+  onRows: (rows: Record<string, unknown>[]) => void,
 ) {
-  const allRows: Record<string, unknown>[] = [];
-
   const twoMonthsAgoISO = getTwoMonthsAgoISO();
   let offset = 0;
 
   while (true) {
     const { data, error } = await supabase
       .from(tableName)
-      .select("*")
+      .select(columns)
       .order("created_at", { ascending: false })
       .order("id", { ascending: false })
       .gte("created_at", twoMonthsAgoISO)
@@ -206,11 +247,10 @@ async function fetchAllRows(
     }
 
     if (!data || data.length === 0) break;
-    allRows.push(...(data as Record<string, unknown>[]));
-    offset += data.length;
+    const rows = data as Record<string, unknown>[];
+    onRows(rows);
+    offset += rows.length;
   }
-
-  return allRows;
 }
 
 async function fetchRowsPage(
@@ -272,92 +312,147 @@ function getTwoMonthsAgoISO() {
   return twoMonthsAgo.toISOString();
 }
 
-function buildDashboardSummary(
-  mainRows: Record<string, unknown>[],
-  errorPage: PageResult,
-  pingRows: Record<string, unknown>[],
+async function buildDashboardSummaryFromDatabase(
+  supabase: ReturnType<typeof createClient>,
 ) {
-  const uniquePlayers = new Set<string>();
-  const itemCounts: Record<string, number> = {};
-  const playerStats: Record<string, { count: number; lastSeen: string }> = {};
-  const itemStats = createItemStats();
-  const hourlyStats = new Array(24).fill(0);
-  const dailyStats: Record<string, number> = {};
-  const weeklyStats: Record<string, number> = {
-    "周日": 0,
-    "周一": 0,
-    "周二": 0,
-    "周三": 0,
-    "周四": 0,
-    "周五": 0,
-    "周六": 0,
+  const acc = createDashboardAccumulator();
+
+  await fetchRowsInBatches(supabase, TABLE_NAME, "id,created_at,data", (rows) => {
+    for (const record of rows) {
+      addMainRecordToAccumulator(acc, record);
+    }
+  });
+
+  await fetchRowsInBatches(
+    supabase,
+    TABLE_NAME_PING,
+    "id,created_at,average_ping,max_ping",
+    (rows) => {
+      for (const record of rows) {
+        addPingRecordToAccumulator(acc, record);
+      }
+    },
+  );
+
+  return finalizeDashboardAccumulator(acc);
+}
+
+function createDashboardAccumulator(): DashboardAccumulator {
+  return {
+    uniquePlayers: new Set<string>(),
+    itemCounts: {},
+    playerStats: {},
+    itemStats: createItemStats(),
+    hourlyStats: new Array(24).fill(0),
+    dailyStats: {},
+    weeklyStats: {
+      "周日": 0,
+      "周一": 0,
+      "周二": 0,
+      "周三": 0,
+      "周四": 0,
+      "周五": 0,
+      "周六": 0,
+    },
+    recentActivity: [],
+    pingByDay: {},
+    totalSelections: 0,
+    totalRecords: 0,
+    lastUpdate: null,
   };
-  const recentActivity: Array<{ time: string; playerId: string }> = [];
-  let totalSelections = 0;
+}
 
-  for (const record of mainRows) {
-    const parsedData = parseRecordData(record.data);
-    const createdAt = String(record.created_at || "");
-    if (!parsedData) continue;
+function addMainRecordToAccumulator(
+  acc: DashboardAccumulator,
+  record: Record<string, unknown>,
+) {
+  acc.totalRecords++;
+  const parsedData = parseRecordData(record.data);
+  const createdAt = String(record.created_at || "");
+  if (!acc.lastUpdate && createdAt) acc.lastUpdate = createdAt;
+  if (!parsedData) return;
 
-    const playerId = getStringField(parsedData, ["PlayerId"]);
-    if (playerId) {
-      uniquePlayers.add(playerId);
-      if (!playerStats[playerId]) {
-        playerStats[playerId] = { count: 0, lastSeen: createdAt };
-      }
-      playerStats[playerId].count++;
-      if (createdAt && createdAt > playerStats[playerId].lastSeen) {
-        playerStats[playerId].lastSeen = createdAt;
-      }
+  const playerId = getStringField(parsedData, ["PlayerId"]);
+  if (playerId) {
+    acc.uniquePlayers.add(playerId);
+    if (!acc.playerStats[playerId]) {
+      acc.playerStats[playerId] = { count: 0, lastSeen: createdAt };
     }
-
-    if (recentActivity.length < RECENT_ACTIVITY_LIMIT) {
-      recentActivity.push({
-        time: createdAt,
-        playerId: playerId || "未知玩家",
-      });
-    }
-
-    for (const category of ["Cards", "Relics", "Blessings", "HardTags"]) {
-      const categoryData = parsedData[category];
-      if (isObjectRecord(categoryData) && Array.isArray(categoryData.Select)) {
-        for (const item of categoryData.Select) {
-          const itemId = getItemId(item);
-          if (itemId) {
-            itemCounts[itemId] = (itemCounts[itemId] || 0) + 1;
-            totalSelections++;
-          }
-        }
-      }
-    }
-
-    if (parsedData.Cards) processItemData(parsedData.Cards, itemStats.cards);
-    if (parsedData.Relics) processItemData(parsedData.Relics, itemStats.relics);
-    if (parsedData.Blessings) {
-      processItemData(parsedData.Blessings, itemStats.blessings);
-    }
-    if (parsedData.HardTags) processItemData(parsedData.HardTags, itemStats.hardTags);
-
-    const date = createdAt ? new Date(createdAt) : null;
-    if (date && !Number.isNaN(date.getTime())) {
-      const hour = date.getHours();
-      const dateStr = date.toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" });
-      const weekday = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][
-        date.getDay()
-      ];
-      hourlyStats[hour]++;
-      dailyStats[dateStr] = (dailyStats[dateStr] || 0) + 1;
-      weeklyStats[weekday]++;
+    acc.playerStats[playerId].count++;
+    if (createdAt && createdAt > acc.playerStats[playerId].lastSeen) {
+      acc.playerStats[playerId].lastSeen = createdAt;
     }
   }
 
-  const topItems = Object.entries(itemCounts)
+  if (acc.recentActivity.length < RECENT_ACTIVITY_LIMIT) {
+    acc.recentActivity.push({
+      time: createdAt,
+      playerId: playerId || "未知玩家",
+    });
+  }
+
+  for (const category of ["Cards", "Relics", "Blessings", "HardTags"]) {
+    const categoryData = parsedData[category];
+    if (isObjectRecord(categoryData) && Array.isArray(categoryData.Select)) {
+      for (const item of categoryData.Select) {
+        const itemId = getItemId(item);
+        if (itemId) {
+          acc.itemCounts[itemId] = (acc.itemCounts[itemId] || 0) + 1;
+          acc.totalSelections++;
+        }
+      }
+    }
+  }
+
+  if (parsedData.Cards) processItemData(parsedData.Cards, acc.itemStats.cards);
+  if (parsedData.Relics) processItemData(parsedData.Relics, acc.itemStats.relics);
+  if (parsedData.Blessings) {
+    processItemData(parsedData.Blessings, acc.itemStats.blessings);
+  }
+  if (parsedData.HardTags) processItemData(parsedData.HardTags, acc.itemStats.hardTags);
+
+  const date = createdAt ? new Date(createdAt) : null;
+  if (date && !Number.isNaN(date.getTime())) {
+    const hour = date.getHours();
+    const dateStr = date.toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" });
+    const weekday = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][
+      date.getDay()
+    ];
+    acc.hourlyStats[hour]++;
+    acc.dailyStats[dateStr] = (acc.dailyStats[dateStr] || 0) + 1;
+    acc.weeklyStats[weekday]++;
+  }
+}
+
+function addPingRecordToAccumulator(
+  acc: DashboardAccumulator,
+  row: Record<string, unknown>,
+) {
+  const createdAt = String(row.created_at || "");
+  if (!createdAt) return;
+  const day = createdAt.slice(0, 10);
+  const avgPing = Number(row.average_ping);
+  const maxPing = Number(row.max_ping);
+  if (!acc.pingByDay[day]) {
+    acc.pingByDay[day] = { sumAvg: 0, countAvg: 0, sumMax: 0, countMax: 0 };
+  }
+  if (!Number.isNaN(avgPing)) {
+    acc.pingByDay[day].sumAvg += avgPing;
+    acc.pingByDay[day].countAvg += 1;
+  }
+  if (!Number.isNaN(maxPing)) {
+    acc.pingByDay[day].sumMax += maxPing;
+    acc.pingByDay[day].countMax += 1;
+  }
+}
+
+function finalizeDashboardAccumulator(acc: DashboardAccumulator) {
+  const topItems = Object.entries(acc.itemCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10)
     .map(([id, count]) => ({ id, count }));
 
-  const players = Object.entries(playerStats)
+  const players = Object.entries(acc.playerStats)
     .sort((a, b) => b[1].count - a[1].count)
     .slice(0, PLAYER_LIMIT)
     .map(([playerId, stats]) => ({
@@ -366,7 +461,7 @@ function buildDashboardSummary(
       lastSeen: stats.lastSeen,
     }));
 
-  const sortedDaily = Object.entries(dailyStats)
+  const sortedDaily = Object.entries(acc.dailyStats)
     .sort((a, b) => new Date(b[0]).getTime() - new Date(a[0]).getTime())
     .slice(0, DAILY_LIMIT)
     .map(([date, count]) => ({ date, count }));
@@ -374,66 +469,33 @@ function buildDashboardSummary(
   return {
     generatedAt: new Date().toISOString(),
     stats: {
-      totalRecords: mainRows.length,
-      activePlayers: uniquePlayers.size,
-      lastUpdate: mainRows[0]?.created_at || null,
+      totalRecords: acc.totalRecords,
+      activePlayers: acc.uniquePlayers.size,
+      lastUpdate: acc.lastUpdate,
     },
     overview: {
-      totalRecords: mainRows.length,
-      activePlayers: uniquePlayers.size,
-      totalSelections,
-      uniqueItemCount: Object.keys(itemCounts).length,
+      totalRecords: acc.totalRecords,
+      activePlayers: acc.uniquePlayers.size,
+      totalSelections: acc.totalSelections,
+      uniqueItemCount: Object.keys(acc.itemCounts).length,
       topItems,
-      recentActivity,
+      recentActivity: acc.recentActivity,
     },
     players: {
-      totalPlayers: Object.keys(playerStats).length,
+      totalPlayers: Object.keys(acc.playerStats).length,
       rows: players,
     },
-    itemStats,
+    itemStats: acc.itemStats,
     time: {
-      hourlyStats,
-      weeklyStats,
+      hourlyStats: acc.hourlyStats,
+      weeklyStats: acc.weeklyStats,
       dailyStats: sortedDaily,
     },
-    ping: buildPingSummary(pingRows),
-    errors: {
-      rows: errorPage.rows,
-      pagination: {
-        nextCursor: errorPage.nextCursor,
-        hasMore: errorPage.hasMore,
-        pageSize: errorPage.rows.length,
-        totalRows: errorPage.totalRows,
-      },
-    },
+    ping: buildPingSummary(acc.pingByDay),
   };
 }
 
-function buildPingSummary(pingRows: Record<string, unknown>[]) {
-  const byDay: Record<
-    string,
-    { sumAvg: number; countAvg: number; sumMax: number; countMax: number }
-  > = {};
-
-  for (const row of pingRows) {
-    const createdAt = String(row.created_at || "");
-    if (!createdAt) continue;
-    const day = createdAt.slice(0, 10);
-    const avgPing = Number(row.average_ping);
-    const maxPing = Number(row.max_ping);
-    if (!byDay[day]) {
-      byDay[day] = { sumAvg: 0, countAvg: 0, sumMax: 0, countMax: 0 };
-    }
-    if (!Number.isNaN(avgPing)) {
-      byDay[day].sumAvg += avgPing;
-      byDay[day].countAvg += 1;
-    }
-    if (!Number.isNaN(maxPing)) {
-      byDay[day].sumMax += maxPing;
-      byDay[day].countMax += 1;
-    }
-  }
-
+function buildPingSummary(byDay: Record<string, PingDayStats>) {
   return Object.entries(byDay)
     .map(([day, s]) => ({
       day,
@@ -443,101 +505,113 @@ function buildPingSummary(pingRows: Record<string, unknown>[]) {
     .sort((a, b) => a.day.localeCompare(b.day));
 }
 
-function buildItemDetail(rows: Record<string, unknown>[], itemId: string) {
+async function buildItemDetailFromDatabase(
+  supabase: ReturnType<typeof createClient>,
+  itemId: string,
+) {
+  const acc = createItemDetailAccumulator(itemId);
+
+  await fetchRowsInBatches(supabase, TABLE_NAME, "id,created_at,data", (rows) => {
+    for (const record of rows) {
+      addItemDetailRecordToAccumulator(acc, record);
+    }
+  });
+
+  return acc;
+}
+
+function createItemDetailAccumulator(itemId: string): ItemDetailAccumulator {
   const layerData: Record<number, LayerStats> = {};
   for (let i = 1; i <= 30; i++) {
     layerData[i] = { show: 0, select: 0, buy: 0, total: 0 };
   }
 
-  let totalShow = 0;
-  let totalSelect = 0;
-  let totalBuy = 0;
-  let firstSeen: string | null = null;
-  let lastSeen: string | null = null;
-
-  for (const record of rows) {
-    const parsedData = parseRecordData(record.data);
-    if (!parsedData) continue;
-
-    let foundInShow = false;
-    let foundInSelect = false;
-    let foundInBuy = false;
-    let currentLayer = 1;
-
-    for (const itemType of ["Cards", "Relics", "Blessings", "HardTags"]) {
-      const itemData = parsedData[itemType];
-      if (!itemData) continue;
-
-      for (const showType of ["RewardShow", "ShopShow", "Show"]) {
-        for (const item of getArrayField(itemData, showType)) {
-          if (getItemId(item) === itemId) {
-            currentLayer = getItemLayer(item);
-            foundInShow = true;
-          }
-        }
-      }
-
-      for (const selectType of ["Select", "Selected", "Picked"]) {
-        for (const item of getArrayField(itemData, selectType)) {
-          if (getItemId(item) === itemId) {
-            currentLayer = getItemLayer(item);
-            foundInSelect = true;
-          }
-        }
-      }
-
-      for (const buyType of ["Buy", "Bought", "Purchased"]) {
-        for (const item of getArrayField(itemData, buyType)) {
-          if (getItemId(item) === itemId) {
-            currentLayer = getItemLayer(item);
-            foundInBuy = true;
-          }
-        }
-      }
-
-      if (Array.isArray(itemData)) {
-        for (const item of itemData) {
-          if (getItemId(item) === itemId) {
-            currentLayer = getItemLayer(item);
-            foundInSelect = true;
-          }
-        }
-      }
-    }
-
-    if (!foundInShow && !foundInSelect && !foundInBuy) continue;
-
-    const normalizedLayer = Math.min(Math.max(Number.parseInt(String(currentLayer)), 1), 30);
-    if (foundInShow) {
-      layerData[normalizedLayer].show++;
-      totalShow++;
-    }
-    if (foundInSelect) {
-      layerData[normalizedLayer].select++;
-      totalSelect++;
-    }
-    if (foundInBuy) {
-      layerData[normalizedLayer].buy++;
-      totalBuy++;
-    }
-    layerData[normalizedLayer].total++;
-
-    const createdAt = String(record.created_at || "");
-    if (createdAt) {
-      if (!firstSeen || createdAt < firstSeen) firstSeen = createdAt;
-      if (!lastSeen || createdAt > lastSeen) lastSeen = createdAt;
-    }
-  }
-
   return {
     itemId,
     layerData,
-    totalShow,
-    totalSelect,
-    totalBuy,
-    firstSeen,
-    lastSeen,
+    totalShow: 0,
+    totalSelect: 0,
+    totalBuy: 0,
+    firstSeen: null,
+    lastSeen: null,
   };
+}
+
+function addItemDetailRecordToAccumulator(
+  acc: ItemDetailAccumulator,
+  record: Record<string, unknown>,
+) {
+  const parsedData = parseRecordData(record.data);
+  if (!parsedData) return;
+
+  let foundInShow = false;
+  let foundInSelect = false;
+  let foundInBuy = false;
+  let currentLayer = 1;
+
+  for (const itemType of ["Cards", "Relics", "Blessings", "HardTags"]) {
+    const itemData = parsedData[itemType];
+    if (!itemData) continue;
+
+    for (const showType of ["RewardShow", "ShopShow", "Show"]) {
+      for (const item of getArrayField(itemData, showType)) {
+        if (getItemId(item) === acc.itemId) {
+          currentLayer = getItemLayer(item);
+          foundInShow = true;
+        }
+      }
+    }
+
+    for (const selectType of ["Select", "Selected", "Picked"]) {
+      for (const item of getArrayField(itemData, selectType)) {
+        if (getItemId(item) === acc.itemId) {
+          currentLayer = getItemLayer(item);
+          foundInSelect = true;
+        }
+      }
+    }
+
+    for (const buyType of ["Buy", "Bought", "Purchased"]) {
+      for (const item of getArrayField(itemData, buyType)) {
+        if (getItemId(item) === acc.itemId) {
+          currentLayer = getItemLayer(item);
+          foundInBuy = true;
+        }
+      }
+    }
+
+    if (Array.isArray(itemData)) {
+      for (const item of itemData) {
+        if (getItemId(item) === acc.itemId) {
+          currentLayer = getItemLayer(item);
+          foundInSelect = true;
+        }
+      }
+    }
+  }
+
+  if (!foundInShow && !foundInSelect && !foundInBuy) return;
+
+  const normalizedLayer = Math.min(Math.max(Number.parseInt(String(currentLayer)), 1), 30);
+  if (foundInShow) {
+    acc.layerData[normalizedLayer].show++;
+    acc.totalShow++;
+  }
+  if (foundInSelect) {
+    acc.layerData[normalizedLayer].select++;
+    acc.totalSelect++;
+  }
+  if (foundInBuy) {
+    acc.layerData[normalizedLayer].buy++;
+    acc.totalBuy++;
+  }
+  acc.layerData[normalizedLayer].total++;
+
+  const createdAt = String(record.created_at || "");
+  if (createdAt) {
+    if (!acc.firstSeen || createdAt < acc.firstSeen) acc.firstSeen = createdAt;
+    if (!acc.lastSeen || createdAt > acc.lastSeen) acc.lastSeen = createdAt;
+  }
 }
 
 function createItemStats(): ItemStatsByType {
