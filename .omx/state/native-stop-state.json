@@ -102,11 +102,11 @@
     },
     "019ebc45-6480-7a42-a8e7-3e2e929401e8": {
       "ordinary_no_progress_guard": {
-        "fingerprint": "ordinary|这次按真实错误处理了：`worker_resource_limit` 不是前端问题，是 edge function 仍然现场扫太多数据导致算力被限。 我已经重新改并部署了 `dashboard-data`： - 不再把主表 / ping 表全量 rows 存成数组。 - 改成每 500 条读取后立刻累计统计，然后丢弃原始页数据。 - 主表只取 `id,created_at,data`，ping 表只取 `id,created_at,average_ping,max_ping`。 - 物品详情也改成同样的批量累计。 - 临时 supabase token 已删除。 - 部署成功，`node --check js\\script.js` 通过。 现在再刷新试一下。 如果仍然报 `worker_resource_limit`，就说明“实时扫近两个月数据”本身已经超出 edge function 能力，下一步必须做数据库侧预聚合/物化表，edge function 只读聚合结果。",
-        "first_seen_at": "2026-06-13T16:50:30.327Z",
-        "last_seen_at": "2026-06-13T16:50:30.327Z",
+        "fingerprint": "ordinary|这次已经换成数据库侧 rpc 了，不再让 edge function 扫全表，所以不会再触发 `worker_resource_limit` 那条路径。 我做了这些： - 新增并在 supabase sql editor 执行了 `dashboard_data_summary(error_page_size)` 和 `dashboard_item_detail(item_id)`。 - edge function `dashboard-data` 现在只做鉴权 + 调 rpc + 返回 json。 - 报错明细分页仍然走 edge function 的轻量分页。 - 重新部署了 `dashboard-data`。 - 临时 supabase token 已删除。 - `node --check js\\script.js` 通过。 现在刷新试一下。若还有报错，应该会是 sql/rpc 的具体错误，不会再是 edge worker compute limit。",
+        "first_seen_at": "2026-06-13T17:02:10.675Z",
+        "last_seen_at": "2026-06-13T17:02:10.675Z",
         "repeat_count": 1,
-        "last_turn_id": "019ec1e3-9fd4-7e52-a81e-1a1e9d12272e",
+        "last_turn_id": "019ec1e6-bfc1-7353-8f76-b580d44f0af7",
         "last_thread_id": null
       }
     },
